@@ -846,3 +846,34 @@ judgment about repository quality. Candidate status does not waive corpus
 limits or establish ground truth. M2 measurements and M5 inspection must
 confirm supported-source availability,
 complete-corpus size, explicit rationale, question quality, and reviewability.
+
+## D-027 — Use Python 3.13 and uv for project and dependency management
+
+- **Status:** Accepted
+- **Date:** 2026-09-04
+
+### Context
+
+The project needs one repeatable way to select Python, create an isolated
+environment, declare dependencies, reproduce exact resolved versions, and run
+development tools locally and in CI. A workflow based only on `venv` and `pip`
+would require dependency declarations and installed versions to be maintained
+through separate manual steps.
+
+### Decision
+
+Use Python 3.13 and uv as the project and dependency manager. Keep project
+metadata and direct dependency constraints in `pyproject.toml`, commit the
+cross-platform `uv.lock`, pin the project Python line in `.python-version`, and
+keep the generated `.venv/` outside version control.
+
+Use the uv development dependency group for pytest, Ruff, and mypy. Run project
+tools through `uv run`, and use `uv sync --locked` when reproducing the checked-in
+environment without changing dependency versions.
+
+### Consequences
+
+Adding or removing a dependency uses uv so the project declaration, lockfile,
+and local environment stay synchronized. Dependency upgrades remain explicit
+rather than occurring silently. Contributors need uv, but do not need to
+manually create or activate a virtual environment for the documented workflow.

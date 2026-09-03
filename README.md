@@ -46,16 +46,32 @@ platform, but additional repository platforms are not currently implemented.
 | pytest and minimal CI | Automated verification of the implementation |
 
 The core retrieval and agent loop will be project-owned rather than hidden
-behind a large orchestration framework. Exact development-environment,
-formatting, linting, and type-checking choices will be recorded when the M1
-project skeleton is approved.
+behind a large orchestration framework. The development foundation uses Python
+3.13, uv, pytest, Ruff, and mypy.
 
 ## Project status
 
 RepoRationale is in the early implementation stage. The product definition,
-architecture, decision log, and evaluation plan are established, while the
-Python skeleton and end-to-end application have not yet been implemented.
-Setup and demo commands will be added only when there is a working path to run.
+architecture, decision log, evaluation plan, and tested Python package skeleton
+are established. The end-to-end application is not yet available.
+
+## Development
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then
+reproduce the locked development environment:
+
+```bash
+uv sync --locked
+```
+
+Run the current quality checks:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run pytest
+```
 
 ## Project documents
 

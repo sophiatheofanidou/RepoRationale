@@ -11,27 +11,27 @@ or a replacement for the product and architecture documents.
 ## 1. Current state
 
 **Active task:** Git, remote, and development foundation  
-**Task status:** In progress
-**Last completed work:** M0 is complete. A public GitHub repository has been
-created by the user, the local repository is initialized on `main`, `origin`
-points to the confirmed remote, and the repository-local Git author identity is
-confirmed. The approved M0 documents, protective `.gitignore`, and initial
-`README.md` are preserved in the local foundation baseline.  
-**Verification performed:** The M0 exit criteria remain satisfied; local Git is
-on an unborn `main` branch; `origin` is configured for the confirmed
-RepoRationale remote; the repository-local author is the user with the user's
-GitHub-provided noreply address; and `.local/`, secrets, environments, caches,
-generated snapshots, vector indexes, and evaluation traces are excluded by
-`.gitignore`.  
+**Task status:** Ready for review
+**Last completed work:** M0 is complete and preserved in the local foundation
+commit. The M1 Python foundation now uses Python 3.13 and uv, with an installable
+`src/reporationale` package, a locked development environment, pytest, Ruff,
+mypy, one package-import smoke test, and minimal GitHub Actions CI.
+**Verification performed:** `uv sync --locked` reproduced the declared
+environment; `uv run ruff check .` and `uv run ruff format --check .` passed;
+`uv run mypy` reported no issues in the package and tests; and `uv run pytest`
+reported one passing test. The CI workflow runs the same locked-environment
+checks on pushes to `main` and on pull requests. `.venv/` and tool caches remain
+ignored.
 **Open questions or blockers:** None for local M1 work. Publishing the local
 foundation commit to the configured public remote is intentionally deferred
 until the user requests a push.  
-**Next action:** Present the minimal Python development-foundation choices and
-trade-offs for approval before implementing the tested package skeleton.
+**Next action:** Review the uncommitted development-foundation changes, then
+present their exact scope and a proposed commit message for the user's approval.
 
-The project has no implementation yet. The initial idea has been reviewed
-against its target users, likely questions, general coding-agent
-alternatives, and the need to keep the MVP small.
+The project currently has an installable, tested package skeleton but no
+product behaviour. The initial idea has been reviewed against its target users,
+likely questions, general coding-agent alternatives, and the need to keep the
+MVP small.
 
 Agreed product boundaries are recorded in `project.md`. Accepted and proposed
 choices are recorded in `decisions.md`. The original draft remains reference

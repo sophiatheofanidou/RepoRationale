@@ -97,6 +97,19 @@ flowchart LR
   counts have been verified. It contains the normalized corpus, derived chunks,
   vector index, and compatibility metadata as one reusable local result.
 
+### Normalized source-document contract
+
+`SourceDocument` is the platform-independent boundary returned by a repository
+source adapter. It contains a platform-namespaced `source_id`, platform and
+repository identifiers, an extensible platform-native `source_type`, non-empty
+text, the original source URL, optional timezone-aware creation and update
+timestamps, and optional title, item number, parent identity, and JSON metadata.
+
+The model freezes its top-level fields, rejects unknown top-level fields,
+requires parent identities to use the same platform namespace, and prevents
+contradictory timestamp order. Provider SDK response objects never cross this
+boundary.
+
 The normalized source corpus is the canonical rebuild input; chunks, embeddings,
 and the vector index are derived data. Indexing runs synchronously with
 phase-level progress. Failed or interrupted builds are not queryable, while an

@@ -1,7 +1,7 @@
 # RepoRationale — Implementation Plan and Current State
 
 **Project state:** Implementation  
-**Current milestone:** M1 — Language foundation and repository skeleton  
+**Current milestone:** M2 — GitHub ingestion
 **Last updated:** 2026-09-04
 
 This document is the source of truth for current progress, the active
@@ -10,23 +10,27 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Git, remote, and development foundation  
-**Task status:** Ready for review
+**Active task:** Repository identity and preflight contract
+**Task status:** Ready
 **Last completed work:** M0 is complete and preserved in the local foundation
-commit. The M1 Python foundation now uses Python 3.13 and uv, with an installable
-`src/reporationale` package, a locked development environment, pytest, Ruff,
-mypy, one package-import smoke test, and minimal GitHub Actions CI.
+commit. The M1 Python development foundation is preserved in local commit
+`316032c`. It uses Python 3.13 and uv, with an installable `src/reporationale`
+package, a locked development environment, pytest, Ruff, mypy, one
+package-import smoke test, and minimal GitHub Actions CI. M1 is complete in the
+current repository state with validated local configuration for user-supplied
+credentials and a platform-independent, tested `SourceDocument` domain model.
 **Verification performed:** `uv sync --locked` reproduced the declared
 environment; `uv run ruff check .` and `uv run ruff format --check .` passed;
-`uv run mypy` reported no issues in the package and tests; and `uv run pytest`
-reported one passing test. The CI workflow runs the same locked-environment
-checks on pushes to `main` and on pull requests. `.venv/` and tool caches remain
-ignored.
-**Open questions or blockers:** None for local M1 work. Publishing the local
-foundation commit to the configured public remote is intentionally deferred
-until the user requests a push.  
-**Next action:** Review the uncommitted development-foundation changes, then
-present their exact scope and a proposed commit message for the user's approval.
+`uv run mypy` reported no issues in seven source files; and `uv run pytest`
+reported fifteen passing tests. Tests cover credential loading and validation,
+masked secrets, source identity and relationships, extensible platform-native
+types, non-empty text, strict top-level fields, and timestamp rules. `.env`,
+`.venv/`, generated indexes, and tool caches remain ignored.
+**Open questions or blockers:** None for starting M2. Publishing local commits
+to the configured public remote is intentionally deferred until the user
+requests a push.
+**Next action:** Define repository identity validation and the preflight result
+contract before introducing GitHub API calls or installing the GitHub client.
 
 The project currently has an installable, tested package skeleton but no
 product behaviour. The initial idea has been reviewed against its target users,
@@ -51,12 +55,12 @@ source-aware chunk (D-021). Users supply their own external-service credentials
 
 ## 2. Immediate next steps
 
-1. Create the Git/GitHub foundation, add a concise initial README, and preserve
-   the approved M0 documents in the first user-authored commit.
-2. Select the minimal Python environment and quality-tool configuration, then
-   create the tested package skeleton.
-3. Add local secret configuration and the small source-document domain model
-   in separate, reviewable slices.
+1. Define platform-independent repository identity and preflight result
+   contracts with tests.
+2. Implement the GitHub source adapter with explicit pagination and fixture-
+   based tests before using a live repository.
+3. Add deterministic normalized-corpus persistence, measured admission limits,
+   and the explicit full-index rebuild command.
 
 ## 3. Milestones
 
@@ -88,7 +92,7 @@ Exit criteria:
 
 ### M1 — Language foundation and repository skeleton
 
-**Status:** Active
+**Status:** Complete
 
 **Goal:** Establish a tested project skeleton without adding RAG complexity.
 
@@ -112,6 +116,8 @@ Exit criteria:
 - the source-document model is independent of GitHub SDK response types.
 
 ### M2 — GitHub ingestion
+
+**Status:** Active
 
 **Goal:** Build a repeatable corpus from one public GitHub repository.
 

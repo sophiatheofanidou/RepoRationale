@@ -52,8 +52,9 @@ behind a large orchestration framework. The development foundation uses Python
 ## Project status
 
 RepoRationale is in the early implementation stage. The product definition,
-architecture, decision log, evaluation plan, and tested Python package skeleton
-are established. The end-to-end application is not yet available.
+architecture, decision log, evaluation plan, tested Python foundation, local
+credential configuration, and normalized source-document contract are
+established. The end-to-end application is not yet available.
 
 ## Development
 
@@ -63,6 +64,18 @@ reproduce the locked development environment:
 ```bash
 uv sync --locked
 ```
+
+When you are ready to run features that call external services, create your
+local credential file:
+
+```bash
+cp .env.example .env
+```
+
+Replace the placeholders in `.env` with your own GitHub token, Voyage API key,
+and Anthropic API key. The `.env` file is ignored by Git and must never be
+committed. The current package skeleton and tests do not require real
+credentials.
 
 Run the current quality checks:
 

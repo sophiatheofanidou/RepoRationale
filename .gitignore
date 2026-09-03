@@ -1,0 +1,43 @@
+# Private project context
+.local/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+*.local
+secrets.*
+
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Generated repository data and indexes
+data/
+snapshots/
+indexes/
+vector_indexes/
+.chroma/
+chroma/
+evaluation-runs/
+traces/
+*.sqlite3
+*.log
+
+# Local editor and operating-system files
+.idea/
+.DS_Store
+Thumbs.db

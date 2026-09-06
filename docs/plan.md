@@ -10,37 +10,36 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Define the M3 chunk identity and source-aware splitting contract
+**Active task:** Define the M3 lexical retrieval baseline and evidence-result
+contract
 **Task status:** Ready
-**Last completed work:** M2 is complete after independent review and its
-accepted implementation has been separated into collaboration, domain,
-GitHub-adapter, and application/snapshot commit checkpoints. The project
-accepts one public GitHub repository, validates it through preflight, collects
-the complete supported pull-request, issue, comment, review, commit, and
-Markdown corpus, normalizes stable evidence sources, and atomically persists a
-validated reusable snapshot. Repository-wide comment collections reduced
-requests, eight bounded workers handle the unavoidable per-PR review calls, and
-the shared D-028 defaults enforce admission limits of 700 roots, 500 closed
-pull requests, 1,100 commits, and 100 tree entries plus runtime caps of 3,000
-sources and 750 collection requests.
-**Verification performed:** Codex independently ran `uv sync --locked`,
-`uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, and
-`uv run pytest -q`; all passed, with mypy reporting no issues in 48 source files
-and pytest reporting 478 passing tests in 1.47 seconds. `git diff --check`
-passed apart from line-ending notices. Authenticated builds of
-`pallets/itsdangerous` and `pallets/markupsafe` produced deterministic reusable
-snapshots; the optimized `markupsafe` run used 411 requests including lookup.
-No credential, generated snapshot, index, or `.local/` file is tracked.
-**Known limitations or deviations:** M2 produces normalized sources, not
-searchable chunks, embeddings, or a vector index. Its two completed development
-samples do not establish general production capacity, and repositories beyond
-the measured D-028 envelope are intentionally unsupported.
-**Open questions or blockers:** None. The exact chunk identity and splitting
-rules still need to be proposed and reviewed before implementation.
-**Next action:** Codex prepares one bounded Claude implementation prompt for
-the chunk identity and source-aware splitting contract, including only the
-minimum focused tests, then reviews the resulting diff before updating task
-state.
+**Last completed work:** The first M3 slice is accepted after independent Codex
+review and one focused correction pass. It adds a provider-independent
+`SourceChunk` with stable source-and-position identity, deterministic
+Markdown-aware and paragraph-aware splitting, and a reusable derived chunk
+artifact beneath the validated normalized-source snapshot. The artifact is
+anchored to the canonical source digest, records schema and chunker
+compatibility, and is published, loaded, reused, or explicitly rebuilt without
+rewriting `manifest.json` or `sources.jsonl` and without calling GitHub.
+**Verification performed:** Codex independently ran the 15 focused chunk tests,
+Ruff lint and formatting checks, mypy, the complete test suite, and
+`git diff --check`. All checks passed: mypy reported no issues in 53 source
+files and pytest reported 493 passing tests in 1.53 seconds. The only output
+outside clean results was the existing line-ending notice and a sandbox-local
+pytest cache warning. Git status contains only the accepted slice and these
+Codex-owned documentation updates; no credential, generated snapshot, index,
+or `.local/` file is tracked.
+**Known limitations or deviations:** No project-wide chunk size or overlap has
+been selected. Markdown splitting is a small deterministic structural scanner,
+not a complete CommonMark parser. Chunks are persisted but are not yet
+searchable; no lexical index, embeddings, vector index, or retrieval service
+exists.
+**Open questions or blockers:** None. The lexical baseline still needs a small
+retrieval-result contract whose provenance can also be reused by the later
+vector product path.
+**Next action:** Codex prepares one bounded Claude implementation prompt for a
+BM25 lexical baseline over the persisted chunks and a shared ranked-evidence
+result contract, with only focused deterministic retrieval tests.
 
 The project now has a tested, repeatable GitHub ingestion and normalized-
 snapshot foundation. M3 builds retrieval artifacts from that canonical local
@@ -64,9 +63,11 @@ source-aware chunk (D-021). Users supply their own external-service credentials
 
 ## 2. Immediate next steps
 
-1. Define the chunk identity and source-aware splitting contract.
-2. Persist deterministic derived chunks from a validated normalized snapshot.
-3. Add the lexical retrieval baseline over the same chunks before embeddings.
+1. Add the lexical retrieval baseline and shared evidence-result contract over
+   the persisted chunks.
+2. Add the Voyage embedding pipeline, persisted Chroma vector index,
+   vector-backed `search_history` service, and seed retrieval tests as one
+   end-to-end product-retrieval slice.
 
 ## 3. Milestones
 

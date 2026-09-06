@@ -135,3 +135,48 @@ class SnapshotManifest(BaseModel):
         if sum(self.counts_by_source_type.values()) != self.source_count:
             raise ValueError("counts_by_source_type must sum to source_count")
         return self
+
+
+# Bumped whenever `ChunkArtifactManifest`'s own shape changes incompatibly.
+CHUNK_ARTIFACT_MANIFEST_SCHEMA_VERSION = 1
+
+# Only one derived chunk-artifact status exists, named for exactly what it
+# guarantees (the derived `chunks.jsonl` artifact is complete and
+# validated) and nothing about embeddings or a searchable index, which do
+# not exist yet.
+ChunkArtifactStatus = Literal["chunks_complete"]
+
+
+class ChunkArtifactManifest(BaseModel):
+    """Everything needed to verify and reuse one derived `chunks/chunks.jsonl`
+    artifact, stored beneath its parent normalized-source snapshot
+    directory, without re-reading it first.
+
+    Anchored to its parent normalized-source snapshot by
+    `source_schema_version` and the exact `sources_digest` it was built
+    from, so a chunk artifact can never be silently reused against a
+    normalized-source snapshot it was not actually built from. Frozen and
+    independently validated (direct construction and deserialization
+    alike). Carries no credential, embedding, or vector-index
+    configuration; this manifest means only that the derived chunk corpus
+    itself is complete, never that a searchable index exists.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    manifest_schema_version: _StrictPositiveInt
+    chunk_schema_version: _StrictPositiveInt
+    chunker_algorithm_version: _StrictPositiveInt
+    max_chars: _StrictPositiveInt
+    source_schema_version: _StrictPositiveInt
+    sources_digest: str
+    status: ChunkArtifactStatus
+    chunk_count: _StrictNonNegativeInt
+    chunks_digest: str
+
+    @field_validator("sources_digest", "chunks_digest")
+    @classmethod
+    def digest_must_be_a_sha256_hex_digest(cls, value: str) -> str:
+        if _SHA256_HEX_DIGEST_PATTERN.fullmatch(value) is None:
+            raise ValueError("must be a 64-character lowercase-hex sha256 digest")
+        return value

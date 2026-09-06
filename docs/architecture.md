@@ -1,7 +1,7 @@
 # RepoRationale — Architecture
 
 **Status:** Approved for MVP  
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-06
 
 This document explains how RepoRationale is built: how repository history
 becomes searchable evidence, how a user question becomes a cited answer, which
@@ -117,6 +117,30 @@ The normalized source corpus is the canonical rebuild input; chunks, embeddings,
 and the vector index are derived data. Indexing runs synchronously with
 phase-level progress. Failed or interrupted builds are not queryable, while an
 earlier ready snapshot remains reusable.
+
+### Derived chunk contract
+
+`SourceChunk` is the provider-independent retrieval unit derived from one
+`SourceDocument`. Its stable ID combines the source ID with a zero-based
+position. Every chunk repeats the source provenance needed by later retrieval
+and citations, including platform, repository, source type, URL, timestamps,
+parent relationship, title, item number, and source metadata. Markdown chunks
+also retain their active heading hierarchy.
+
+Markdown sources are split first by heading section and then by block boundary;
+other source types keep their citation-addressable document as the natural
+boundary and split long text at paragraph boundaries. An explicit character
+limit bounds every chunk, with deterministic whitespace-aware fallback for an
+oversized block. The implementation currently adds no overlap and fixes no
+product-wide chunk size; those remain retrieval parameters to evaluate.
+
+Derived chunks are stored deterministically beneath the validated normalized
+snapshot as a separate `chunks/` artifact. Its manifest records the source and
+chunk schema versions, chunker algorithm version and size parameter, source and
+chunk digests, and chunk count. Publication validates the complete artifact
+before atomically replacing only that derived directory. The parent
+`manifest.json` and canonical `sources.jsonl` remain unchanged, and a complete
+chunk artifact still does not mean that a searchable vector index is ready.
 
 ## 3. Question-answering lifecycle
 

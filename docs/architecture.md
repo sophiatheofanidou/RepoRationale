@@ -57,8 +57,11 @@ Its outcomes are:
   estimated ingestion workload exceeds the measured limits. The UI explains
   the reason and stops before paid embedding work begins.
 
-The exact numeric admission limits will be recorded after ingestion benchmarks;
-the architecture defines the outcomes, not their unmeasured values.
+Admission thresholds and runtime caps are centrally defined application policy
+shared by preflight, snapshot building, and the rebuild command. Admission uses
+cheap repository-size signals before collection; hard request and normalized-
+source caps protect the actual build before publication. Their measured values
+are implementation policy rather than architectural structure.
 
 ## 2. Indexing lifecycle
 
@@ -187,6 +190,4 @@ Chunk size, retrieval result count, request concurrency, batching, retries,
 repository admission limits, and the exact Claude model will be selected from
 measurements rather than exposed as user choices.
 
-For additional rationale behind the MVP choices and the evaluation repository
-shortlist, see [decisions.md](decisions.md). Current delivery state is maintained
-in [plan.md](plan.md).
+Current delivery state is maintained in [plan.md](plan.md).

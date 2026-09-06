@@ -51,10 +51,10 @@ behind a large orchestration framework. The development foundation uses Python
 
 ## Project status
 
-RepoRationale is in the early implementation stage. The product definition,
-architecture, decision log, evaluation plan, tested Python foundation, local
-credential configuration, and normalized source-document contract are
-established. The end-to-end application is not yet available.
+RepoRationale is under active development. Public GitHub ingestion and reusable
+normalized-source snapshots are implemented and tested. Retrieval, answer
+generation, and the local interface are not yet complete, so the end-to-end
+application is not yet available.
 
 ## Development
 

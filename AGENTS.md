@@ -87,6 +87,12 @@ state before starting unrelated work.
   needed for another agent to understand what was actually checked.
 - Keep public documentation concise. Preserve the established language and
   purpose of each document; do not copy chat transcripts into the repository.
+- Keep internal tracking identifiers confined to their source-of-truth files:
+  milestone identifiers (the letter M followed by a number) may appear only in
+  `docs/plan.md`, and numbered decision identifiers may appear only in
+  `docs/decisions.md` and `docs/plan.md`. In source code, tests, README,
+  architecture, evaluation, and other audience-facing material, state the
+  relevant behaviour or rationale directly without those internal identifiers.
 
 ## 5. Git authorship and publishing boundary
 

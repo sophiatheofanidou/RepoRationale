@@ -228,9 +228,9 @@ implemented in the MVP.
 
 The core must not depend directly on GitHub response objects or provider SDK
 types, but it also must not introduce unused plugin infrastructure. Request
-concurrency is an M2 implementation parameter to be introduced only if measured
-ingestion time warrants it, and must remain bounded so completeness, ordering,
-retry behaviour, and GitHub rate limits stay observable.
+concurrency is an ingestion implementation parameter to be introduced only if
+measured ingestion time warrants it, and must remain bounded so completeness,
+ordering, retry behaviour, and GitHub rate limits stay observable.
 
 ## D-008 — Use Python as the implementation language
 
@@ -509,9 +509,10 @@ implementation, but that history does not exist yet.
 ### Decision
 
 Do not select the final evaluation repository during initial planning. Make the
-selection in M5 after the application works and the available candidate corpora
-can be inspected. The current provisional shortlist and repositories considered
-but not carried forward are maintained together in D-026.
+selection during final evaluation after the application works and the available
+candidate corpora can be inspected. The current provisional shortlist and
+repositories considered but not carried forward are maintained together in
+D-026.
 
 Do not manufacture pull requests, issues, or rationale solely to make a corpus
 appear richer. Repositories must be indexed separately; this decision does not
@@ -519,11 +520,11 @@ introduce multi-repository search.
 
 ### Consequences
 
-M2 may use fixtures and a convenient development repository to validate GitHub
-ingestion without treating that repository as the final evaluation corpus. The
-final number and composition of reviewed questions will be set after corpus
-validation rather than fixed in advance. Corpus choice is not a blocker for the
-architecture document or repository skeleton.
+Ingestion development may use fixtures and a convenient repository to validate
+GitHub ingestion without treating that repository as the final evaluation
+corpus. The final number and composition of reviewed questions will be set
+after corpus validation rather than fixed in advance. Corpus choice is not a
+blocker for the architecture document or repository skeleton.
 
 ## D-018 — Let the user select the repository in Streamlit
 
@@ -572,7 +573,7 @@ pull-request diffs.
 The MVP accepts repository-level input only. It does not support folder URLs,
 date-window indexing, arbitrary partial history, or silent truncation. A light
 preflight validates public access and compares the estimated corpus with limits
-established by M2 benchmarks. A repository beyond those limits is rejected
+established by ingestion benchmarks. A repository beyond those limits is rejected
 before paid embedding work begins.
 
 ### Consequences
@@ -803,8 +804,9 @@ measure the complete historical corpus or rationale quality.
 
 ### Decision
 
-Keep final evaluation-corpus selection deferred to M5 as established by D-017.
-Carry forward a provisional, size-tiered shortlist for measured validation:
+Keep final evaluation-corpus selection deferred to the evaluation work as
+established by D-017. Carry forward a provisional, size-tiered shortlist for
+measured validation:
 
 - [`psf/black`](https://github.com/psf/black) as the leading smaller
   main-corpus candidate;
@@ -836,16 +838,16 @@ complete supported source mix by itself.
 
 The shortlist is not limited to Python repositories and may be refined with
 recognizable candidates from the wider software-development community before
-M5. Each repository must be indexed separately.
+final evaluation. Each repository must be indexed separately.
 
 ### Consequences
 
 Shortlisted means "evaluate later," not "already approved as the final
 corpus." Likewise, exclusion from this provisional shortlist is not a general
 judgment about repository quality. Candidate status does not waive corpus
-limits or establish ground truth. M2 measurements and M5 inspection must
-confirm supported-source availability,
-complete-corpus size, explicit rationale, question quality, and reviewability.
+limits or establish ground truth. Ingestion measurements and final corpus
+inspection must confirm supported-source availability, complete-corpus size,
+explicit rationale, question quality, and reviewability.
 
 ## D-027 — Use Python 3.13 and uv for project and dependency management
 
@@ -877,3 +879,61 @@ Adding or removing a dependency uses uv so the project declaration, lockfile,
 and local environment stay synchronized. Dependency upgrades remain explicit
 rather than occurring silently. Contributors need uv, but do not need to
 manually create or activate a virtual environment for the documented workflow.
+
+## D-028 — Set conservative initial ingestion limits from measured builds
+
+- **Status:** Accepted
+- **Date:** 2026-09-06
+
+### Context
+
+The complete-corpus promise in D-019 requires the MVP to reject repositories
+whose supported history has not been shown to fit its synchronous local
+ingestion path. Authenticated ingestion builds measured two development repositories.
+The larger successful result had 522 combined issue/pull-request roots, 367
+closed pull requests, 844 commits, 60 tree entries, 2,148 normalized sources,
+and 400 source-collection requests. Separate four-, eight-, and sixteen-worker
+runs preserved the same corpus; eight workers provided the preferred balance
+between elapsed time and GitHub request-rate headroom.
+
+### Decision
+
+Use these initial MVP limits:
+
+| Limit | Value |
+| --- | ---: |
+| Combined issue and pull-request roots | 700 |
+| Closed pull requests | 500 |
+| Commits | 1,100 |
+| Git tree entries | 100 |
+| Actual normalized sources | 3,000 |
+| Actual source-collection requests | 750 |
+
+Keep pull-request review-summary concurrency bounded at eight workers. Define
+the numeric defaults once as application policy and use the same defaults for
+preflight, snapshot building, and the rebuild command. Tests may inject smaller
+limits to exercise boundaries without changing product policy.
+
+The 750-request cap is a total source-collection budget, not a claim that total
+requests and GitHub's per-minute secondary rate limit are interchangeable. It
+provides headroom over the measured 400 requests and covers the structural cost
+of up to 500 unavoidable per-pull-request review calls plus paginated roots,
+commits, comments, and tree/blob requests. The eight-worker benchmark reached
+approximately 643 normalized collection requests per minute without a
+rate-limit response; sixteen workers improved the workflow by only another
+11.8% while increasing that measured rate to approximately 761.
+
+### Consequences
+
+Preflight rejects a repository when a measurable root dimension exceeds its
+admission threshold. During collection, the hard request budget stops the
+request after the permitted maximum before it is sent, and the actual source
+cap is checked before publication. No limit failure produces a partial or ready
+snapshot.
+
+These values define the supported initial MVP envelope, not general production
+capacity. Repositories such as the measured `psf/black` and
+`BurntSushi/ripgrep` preflight probes exceed the 700-root threshold and are
+therefore intentionally unsupported by this first envelope. Changing the
+limits requires new measurements and a reviewed decision rather than an
+unrecorded configuration change.

@@ -1,13 +1,12 @@
 # RepoRationale — Evaluation
 
 **Status:** Approved for MVP  
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-06
 
 This document explains how RepoRationale will be evaluated: what the system
 must prove, how evidence and answers will be reviewed, which measurements will
-be recorded, and how results will be reproduced. It defines the evaluation
-method before results exist; measured findings will be added during later
-milestones.
+be recorded, and how results will be reproduced. It combines the evaluation
+method with the concise measured findings available at each completed stage.
 
 ## 1. What the evaluation must prove
 
@@ -208,6 +207,66 @@ For each repository and indexing run, record:
 - source and chunk counts by type;
 - snapshot size on disk; and
 - skipped or failed items with their reasons.
+
+### Ingestion performance
+
+Authenticated builds used fixed public repository revisions so source identity,
+corpus completeness, request use, and elapsed time could be compared without a
+moving branch changing the input. These are development samples rather than the
+final evaluation corpus.
+
+| Repository revision | Issue/PR roots | Closed PRs | Commits | Tree entries | Sources |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `pallets/itsdangerous@672971d66a2ef9f85151e53283113f33d642dabd` | 433 | 307 | 677 | 60 | 1,659 |
+| `pallets/markupsafe@b2e4d9c7687be25695fffbe93a37622302b24fb1` | 522 | 367 | 844 | 55 | 2,148 |
+
+The `itsdangerous` comparison isolated two optimizations. Repository-wide
+comment collections replaced requests made separately for every issue and pull
+request. Bounded workers were then used only for per-pull-request review
+summaries, for which GitHub provides no repository-wide REST collection.
+
+| Collection strategy | Collection requests | Collection seconds | Workflow seconds | Requests including lookup |
+| --- | ---: | ---: | ---: | ---: |
+| Per-item comments, serial | 1,067 | 342.7 | 349.0 | 1,077 |
+| Repository-wide comments, serial | 334 | 126.7 | 132.6 | 344 |
+| Repository-wide comments, four review workers | 334 | 44.2 | 50.0 | 344 |
+
+Repository-wide collections reduced requests by 68.7% and collection time by
+63.0% without changing the 1,659 sources, per-type counts, corpus digest, or
+unique identities. Four review workers then reduced the complete workflow by a
+further 62.3% without adding requests.
+
+The `markupsafe` comparison measured the bounded review-worker setting. Every
+run used 400 collection requests and 411 requests including repository lookup,
+and produced the same 2,148 sources and corpus digest.
+
+| Review workers | Collection seconds | Workflow seconds | Normalized collection requests/minute |
+| ---: | ---: | ---: | ---: |
+| 4 | 57.1 | 63.5 | 420 |
+| 8 | 37.3 | 43.3 | 643 |
+| 16 | 31.5 | 38.2 | 761 |
+
+Moving from four to eight workers reduced complete workflow time by 31.8%.
+Doubling again to sixteen reduced it by only another 11.8% while increasing the
+request burst. Eight workers therefore provide the selected balance between
+latency and headroom below GitHub's independently enforced secondary rate
+limits. The requests/minute values are throughput extrapolations from phase wall
+time, not individual request latencies. No measured run received a rate-limit
+response. See [GitHub REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+
+The resulting initial MVP envelope is 700 combined issue/pull-request roots,
+500 closed pull requests, 1,100 commits, and 100 tree entries at admission,
+followed by runtime caps of 3,000 normalized sources and 750 collection
+requests. The runtime caps cover volume that cannot be estimated cheaply, such
+as comments and reviews; the request cap is a total per-build budget rather
+than a substitute for rate-limit handling.
+
+Repeated builds and immediate reuse preserved stable unique identities and the
+same corpus digest; failed or malformed collection never published a completed
+snapshot. The two completed samples do not establish general production
+capacity. Larger probes (`BurntSushi/ripgrep` at 2,967 roots and `psf/black` at
+5,238) exceed the initial 700-root envelope and are intentionally unsupported
+until new measurements justify changing it.
 
 ### Question-answering measurements
 

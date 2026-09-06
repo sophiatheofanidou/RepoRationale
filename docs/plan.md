@@ -1,8 +1,8 @@
 # RepoRationale — Implementation Plan and Current State
 
 **Project state:** Implementation  
-**Current milestone:** M2 — GitHub ingestion
-**Last updated:** 2026-09-04
+**Current milestone:** M3 — Retrieval foundation
+**Last updated:** 2026-09-06
 
 This document is the source of truth for current progress, the active
 milestone, and the next implementation steps. It is not a detailed activity log
@@ -10,32 +10,41 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Repository identity and preflight contract
+**Active task:** Define the M3 chunk identity and source-aware splitting contract
 **Task status:** Ready
-**Last completed work:** M0 is complete and preserved in the local foundation
-commit. The M1 Python development foundation is preserved in local commit
-`316032c`. It uses Python 3.13 and uv, with an installable `src/reporationale`
-package, a locked development environment, pytest, Ruff, mypy, one
-package-import smoke test, and minimal GitHub Actions CI. M1 is complete in the
-current repository state with validated local configuration for user-supplied
-credentials and a platform-independent, tested `SourceDocument` domain model.
-**Verification performed:** `uv sync --locked` reproduced the declared
-environment; `uv run ruff check .` and `uv run ruff format --check .` passed;
-`uv run mypy` reported no issues in seven source files; and `uv run pytest`
-reported fifteen passing tests. Tests cover credential loading and validation,
-masked secrets, source identity and relationships, extensible platform-native
-types, non-empty text, strict top-level fields, and timestamp rules. `.env`,
-`.venv/`, generated indexes, and tool caches remain ignored.
-**Open questions or blockers:** None for starting M2. Publishing local commits
-to the configured public remote is intentionally deferred until the user
-requests a push.
-**Next action:** Define repository identity validation and the preflight result
-contract before introducing GitHub API calls or installing the GitHub client.
+**Last completed work:** M2 is complete after independent review and its
+accepted implementation has been separated into collaboration, domain,
+GitHub-adapter, and application/snapshot commit checkpoints. The project
+accepts one public GitHub repository, validates it through preflight, collects
+the complete supported pull-request, issue, comment, review, commit, and
+Markdown corpus, normalizes stable evidence sources, and atomically persists a
+validated reusable snapshot. Repository-wide comment collections reduced
+requests, eight bounded workers handle the unavoidable per-PR review calls, and
+the shared D-028 defaults enforce admission limits of 700 roots, 500 closed
+pull requests, 1,100 commits, and 100 tree entries plus runtime caps of 3,000
+sources and 750 collection requests.
+**Verification performed:** Codex independently ran `uv sync --locked`,
+`uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, and
+`uv run pytest -q`; all passed, with mypy reporting no issues in 48 source files
+and pytest reporting 478 passing tests in 1.47 seconds. `git diff --check`
+passed apart from line-ending notices. Authenticated builds of
+`pallets/itsdangerous` and `pallets/markupsafe` produced deterministic reusable
+snapshots; the optimized `markupsafe` run used 411 requests including lookup.
+No credential, generated snapshot, index, or `.local/` file is tracked.
+**Known limitations or deviations:** M2 produces normalized sources, not
+searchable chunks, embeddings, or a vector index. Its two completed development
+samples do not establish general production capacity, and repositories beyond
+the measured D-028 envelope are intentionally unsupported.
+**Open questions or blockers:** None. The exact chunk identity and splitting
+rules still need to be proposed and reviewed before implementation.
+**Next action:** Codex prepares one bounded Claude implementation prompt for
+the chunk identity and source-aware splitting contract, including only the
+minimum focused tests, then reviews the resulting diff before updating task
+state.
 
-The project currently has an installable, tested package skeleton but no
-product behaviour. The initial idea has been reviewed against its target users,
-likely questions, general coding-agent alternatives, and the need to keep the
-MVP small.
+The project now has a tested, repeatable GitHub ingestion and normalized-
+snapshot foundation. M3 builds retrieval artifacts from that canonical local
+corpus without reopening the GitHub ingestion scope.
 
 Agreed product boundaries are recorded in `project.md`. Accepted and proposed
 choices are recorded in `decisions.md`. The original draft remains reference
@@ -55,12 +64,9 @@ source-aware chunk (D-021). Users supply their own external-service credentials
 
 ## 2. Immediate next steps
 
-1. Define platform-independent repository identity and preflight result
-   contracts with tests.
-2. Implement the GitHub source adapter with explicit pagination and fixture-
-   based tests before using a live repository.
-3. Add deterministic normalized-corpus persistence, measured admission limits,
-   and the explicit full-index rebuild command.
+1. Define the chunk identity and source-aware splitting contract.
+2. Persist deterministic derived chunks from a validated normalized snapshot.
+3. Add the lexical retrieval baseline over the same chunks before embeddings.
 
 ## 3. Milestones
 
@@ -117,7 +123,7 @@ Exit criteria:
 
 ### M2 — GitHub ingestion
 
-**Status:** Active
+**Status:** Complete
 
 **Goal:** Build a repeatable corpus from one public GitHub repository.
 
@@ -150,6 +156,8 @@ Exit criteria:
   and source URL.
 
 ### M3 — Retrieval foundation
+
+**Status:** Active
 
 **Goal:** Retrieve relevant evidence independently of answer generation.
 
@@ -249,9 +257,13 @@ Work should proceed in vertical, testable increments. A typical increment is:
 2. add a focused failing test or evaluation case;
 3. implement the smallest behaviour that satisfies it;
 4. run relevant automated checks;
-5. update this plan;
-6. update `decisions.md`, `architecture.md`, or `evaluation.md` only if their
-   source-of-truth content changed.
+5. complete Codex review of the actual diff;
+6. update this plan and any other canonical document whose source-of-truth
+   content changed;
+7. have Codex present the exact commit scope and proposed message;
+8. after explicit user approval, create that checkpoint before beginning an
+   unrelated slice. If the checkpoint is deliberately deferred, record that
+   fact in the current state.
 
 ## 5. Current risks
 

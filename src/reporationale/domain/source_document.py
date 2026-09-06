@@ -13,6 +13,15 @@ from pydantic import (
 )
 
 
+def require_timezone_aware(value: datetime) -> None:
+    """Reject a timezone-naive datetime. Shared by every model that
+    persists a timestamp (`SourceDocument` here, `SnapshotManifest` in
+    `reporationale.domain.snapshot`), so a naive timestamp cannot become
+    ambiguous once read back on a different machine."""
+    if value.utcoffset() is None:
+        raise ValueError("timestamps must include a timezone")
+
+
 class SourceDocument(BaseModel):
     """One independently identifiable and citation-addressable source."""
 
@@ -48,9 +57,8 @@ class SourceDocument(BaseModel):
         cls,
         value: datetime | None,
     ) -> datetime | None:
-        """Keep persisted timestamps unambiguous across machines."""
-        if value is not None and value.utcoffset() is None:
-            raise ValueError("timestamps must include a timezone")
+        if value is not None:
+            require_timezone_aware(value)
         return value
 
     @model_validator(mode="after")

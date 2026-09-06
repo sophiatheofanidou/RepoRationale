@@ -27,7 +27,8 @@ For that task:
 - implement the smallest coherent vertical slice;
 - add or update proportionate tests;
 - run relevant verification;
-- update source-of-truth documents only when their content actually changed.
+- do not edit canonical documentation, project state, or agent instruction
+  files; report any required documentation or decision change to Codex.
 
 The user remains the final decision-maker. Codex is normally the independent
 planning and review owner. Claude may plan or review, and Codex may implement,
@@ -35,10 +36,11 @@ when the user explicitly assigns those roles.
 
 ## Required handoff
 
-At the end of meaningful implementation work, follow the end-of-session
-protocol in `AGENTS.md`. In `docs/plan.md`, leave the task as `ready for review`
-and record the outcome, changed areas, verification results, known limitations,
-and the exact next action for Codex.
+At the end of meaningful implementation work, do not edit `docs/plan.md` or set
+the task to `ready for review`, `complete`, or any other state. Report the
+bounded outcome, changed areas, verification results, and known limitations to
+Codex. Codex independently reviews the work, updates all canonical documents,
+and selects the next action.
 
 Do not mark implementation or a milestone complete merely because code was
 written. Completion requires the relevant tests, documented exit criteria, and

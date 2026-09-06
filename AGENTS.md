@@ -31,11 +31,15 @@ canonical documents. Never commit, quote, summarize, or otherwise expose
 - The user is the product owner and final decision-maker. Significant changes
   to product scope, architecture, priorities, or accepted decisions require
   the user's approval.
-- Claude is the default implementation owner. It normally implements an
-  approved, bounded task, adds tests, and prepares the work for review.
-- Codex is the default planning and review owner. It normally keeps the work
-  aligned with the plan, reviews the actual changes and verification results,
-  and checks architecture, evaluation quality, and scope boundaries.
+- Claude is the default implementation owner. It implements only the bounded
+  task supplied in a Codex-authored implementation prompt, adds tests, runs the
+  requested verification, and reports its handoff without editing project
+  state or canonical documentation.
+- Codex is the planning, orchestration, documentation, and review owner. It
+  keeps the work aligned with the plan, authors each bounded implementation
+  prompt, reviews the actual changes and verification results, updates task
+  state and next actions, and checks architecture, evaluation quality, and
+  scope boundaries.
 
 These are default responsibilities, not capability restrictions. Either tool
 may perform another role when the user explicitly requests it. Avoid having two
@@ -65,6 +69,12 @@ state before starting unrelated work.
 ## 4. Working protocol
 
 - Work in small, testable vertical slices tied to the active task.
+- Define logical commit checkpoints when planning a milestone. After Codex
+  accepts a vertical slice, stop before starting an unrelated slice: Codex
+  presents the exact files and proposed message, the user explicitly approves
+  the commit, and only then is the checkpoint created. If the user deliberately
+  defers it, record that choice in `docs/plan.md` rather than silently
+  accumulating multiple accepted slices. Claude never creates the checkpoint.
 - Do not implement deferred features or broaden supported platforms, sources,
   authentication, deployment, or infrastructure without an accepted decision.
 - Discuss meaningful new product or architecture decisions with the user before
@@ -114,8 +124,10 @@ its repository-local identity before the first commit.
 
 ## 6. Implementation and review handoff
 
-When Claude finishes an implementation task, it should leave the task as
-`ready for review` in `docs/plan.md` and record:
+When Claude finishes an implementation task, it reports to Codex without
+editing `docs/plan.md`, `docs/project.md`, `docs/decisions.md`,
+`docs/architecture.md`, `docs/evaluation.md`, or the agent instruction files.
+Its handoff should state:
 
 - the bounded outcome completed;
 - the main files or contracts changed;
@@ -124,9 +136,10 @@ When Claude finishes an implementation task, it should leave the task as
 - the next review action.
 
 Codex reviews the actual diff, implementation, and verification evidence rather
-than relying only on the handoff summary. After review, it records either
-`changes requested` with actionable findings or `complete` when the task and
-its relevant exit criteria are genuinely satisfied.
+than relying only on the handoff summary. Codex alone updates the canonical
+documents and records task state, including `ready for review`, `changes
+requested`, or `complete`. Claude must not accept its own work or choose the
+next task.
 
 Small documentation corrections do not require a separate cross-agent review.
 Code changes, architecture-affecting work, ingestion or retrieval behaviour,
@@ -134,8 +147,10 @@ and milestone completion normally do.
 
 ## 7. End-of-session protocol
 
-After a meaningful work session, update `docs/plan.md` so a fresh session can
-resume without chat history. Keep its handoff state compact and include:
+After a meaningful work session, Codex updates `docs/plan.md` so a fresh
+session can resume without chat history. Implementation agents report their
+results to Codex and do not edit the plan. Keep its handoff state compact and
+include:
 
 - current milestone;
 - active task;

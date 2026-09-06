@@ -235,6 +235,29 @@ Retrieval rank orders passages by relevance; it is not an AI confidence score.
 The agent continues or stops according to whether the retrieved text supports
 the requested rationale.
 
+The application owns a provider-independent answering contract and a plain
+Python workflow with a fixed limit of three searches. The answering provider
+returns only one typed action at a time: request a search, provide a final
+answer with selected evidence IDs, or report insufficient evidence. The first
+action must be a search, every completed search receives an explicit
+sufficiency assessment, and a fourth search request is rejected without being
+executed.
+
+The Anthropic adapter owns the Claude message history and translates the
+standard tool-use and tool-result exchange into those application actions. It
+accepts a maintainer-supplied model identifier and exposes only the fixed
+query-only `search_history` schema. Provider response objects and citation
+metadata never cross the adapter boundary.
+
+For an answered result, the workflow resolves numbered citations from the
+accumulated evidence rather than trusting model-supplied titles, links, or
+excerpts. It rejects unseen evidence IDs and requires the numeric markers in
+the answer text to match the resolved citation numbers. Each successful run
+also returns a compact in-memory trace containing search queries, returned
+evidence IDs, sufficiency decisions, missing-information notes, call latency,
+model usage, and the model and agent versions needed by later evaluation. Run
+traces are not persisted at this stage.
+
 ## 4. Architecture roles and MVP technologies
 
 The lifecycles above define the technology-independent architecture. The MVP

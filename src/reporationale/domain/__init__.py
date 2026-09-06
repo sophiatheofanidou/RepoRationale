@@ -4,6 +4,14 @@ Platform-independent only: this package must never import the GitHub
 adapter, `httpx`, or any other provider-specific type.
 """
 
+from reporationale.domain.answering import (
+    AnsweredOutcome,
+    AnsweringRunResult,
+    AnswerOutcome,
+    Citation,
+    InsufficientEvidenceOutcome,
+    RunTrace,
+)
 from reporationale.domain.chunk import SourceChunk
 from reporationale.domain.embedding import EmbeddingBatch
 from reporationale.domain.preflight import PreflightResult, PreflightStatus
@@ -13,11 +21,17 @@ from reporationale.domain.snapshot import VectorIndexManifest
 from reporationale.domain.source_document import SourceDocument
 
 __all__ = [
+    "AnswerOutcome",
+    "AnsweredOutcome",
+    "AnsweringRunResult",
+    "Citation",
     "EmbeddingBatch",
+    "InsufficientEvidenceOutcome",
     "PreflightResult",
     "PreflightStatus",
     "RankedEvidence",
     "RepositoryIdentity",
+    "RunTrace",
     "SourceChunk",
     "SourceDocument",
     "VectorIndexManifest",

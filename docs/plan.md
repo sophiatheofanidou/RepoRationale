@@ -10,40 +10,39 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Plan the first bounded answering-agent slice
+**Active task:** Create the reviewed answering-agent checkpoint
 **Task status:** Ready
-**Last completed work:** The retrieval foundation is complete. Its final slice
-adds a project-owned Voyage 4 embedding boundary, a manifest-anchored persistent
-Chroma cosine index, recoverable staged publication, compatibility and
-corruption handling, restart reuse without repository re-embedding, and a
-vector-backed `search_history` service returning the shared `RankedEvidence`
-contract. Chroma writes respect the local client batch limit, while queries map
-stable result IDs back to the canonical persisted chunks.
-**Verification performed:** Codex independently reviewed the implementation and
-correction diff, ran the ten focused embedding/vector tests, Ruff lint and
-formatting checks, mypy, the complete test suite, `git diff --check`, and the
-repository tracking-identifier check. All checks passed: mypy reported no
-issues in 62 source files and pytest reported 508 passing tests. The only
-additional output was a benign Chroma configuration-readback deprecation
-warning, the existing line-ending notices, and a sandbox-local pytest cache
-warning. No live Voyage request or generated repository snapshot was used.
-**Known limitations or deviations:** The deterministic seed vectors prove the
-pipeline and persistence contracts, not real Voyage retrieval quality. No
-similarity threshold, reranking, hybrid product path, incremental indexing,
-agent behaviour, or user interface exists. A live in-process search service and
-a concurrent forced rebuild of its same Chroma directory are outside the
-single-instance MVP contract.
-**Open questions or blockers:** None. The exact Claude model still requires the
-bounded comparison already assigned to the answering milestone, and real
-retrieval quality remains for the reviewed evaluation corpus.
-**Next action:** Codex defines the smallest coherent answering-agent slice for
-the structured answer and citation contracts, `search_history` tool exposure,
-and bounded tool-call loop, states what remains deferred, and prepares one
-bounded Claude implementation prompt before any code changes.
+**Last completed work:** The first bounded answering-agent slice is accepted.
+It adds provider-independent answer, citation, action, and trace contracts; a
+plain Python loop with `search_history` as its only capability and a fixed
+three-call limit; an Anthropic Messages API adapter with a maintainer-supplied
+model identifier; deterministic in-run citation resolution and marker
+validation; explicit insufficient-evidence behaviour; and the compact
+in-memory trace required by later evaluation.
+**Verification performed:** Codex independently reviewed the implementation,
+the initial six focused tests, and the correction for citation-marker and final
+insufficient-trace handling. It reran the seven focused answering tests, Ruff
+lint and formatting checks, mypy, the complete test suite, `git diff --check`,
+and the repository tracking-identifier check. All checks passed: mypy reported
+no issues in 67 source files and pytest reported 515 passing tests. The only
+additional output was the existing Chroma deprecation warning, line-ending
+notices, and sandbox-local pytest cache warning. No live API request was used.
+**Known limitations or deviations:** The exact Claude model is intentionally
+unselected, and the strict provider response format has been exercised only
+with fake responses. No live answer-quality, tool-use reliability, latency, or
+cost comparison has run. Run traces remain in memory, and no user interface or
+final evaluation harness exists.
+**Open questions or blockers:** None. The accepted slice is awaiting its
+user-approved Git checkpoint before the separate live model-comparison slice.
+**Next action:** The user approves or revises the proposed answering-agent
+checkpoint; after approval, Codex verifies the repository-local Git identity
+and creates only that commit before planning the bounded live Claude-model
+comparison.
 
-The project now has tested, repeatable ingestion and retrieval foundations.
-The completed retrieval work derives its artifacts from the canonical local
-corpus without reopening the GitHub ingestion scope.
+The project now has tested, repeatable ingestion and retrieval foundations plus
+an offline-tested bounded answering path. The completed retrieval work derives
+its artifacts from the canonical local corpus without reopening the GitHub
+ingestion scope.
 
 Agreed product boundaries are recorded in `project.md`. Accepted and proposed
 choices are recorded in `decisions.md`. The original draft remains reference
@@ -63,9 +62,9 @@ source-aware chunk (D-021). Users supply their own external-service credentials
 
 ## 2. Immediate next steps
 
-1. Plan the first bounded answering-agent slice around structured outcomes,
-   citation safety, `search_history` tool exposure, and the maximum tool-call
-   boundary without adding UI or evaluation work.
+1. Create the accepted answering-agent checkpoint after explicit user approval.
+2. Plan the separate bounded live comparison that selects the exact Claude
+   model without adding UI or the final evaluation harness.
 
 ## 3. Milestones
 

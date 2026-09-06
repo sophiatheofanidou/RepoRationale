@@ -1,5 +1,14 @@
 """Application workflows that combine domain contracts with adapters."""
 
+from reporationale.application.answering_workflow import (
+    AnsweringModel,
+    AnsweringProtocolError,
+    AnsweringWorkflowError,
+    CitationMarkerMismatchError,
+    SearchHistoryCapability,
+    UnknownCitationEvidenceError,
+    answer_question,
+)
 from reporationale.application.corpus import (
     CorpusAssemblyError,
     RepositoryCorpus,
@@ -11,9 +20,16 @@ from reporationale.application.preflight import (
 )
 
 __all__ = [
+    "AnsweringModel",
+    "AnsweringProtocolError",
+    "AnsweringWorkflowError",
+    "CitationMarkerMismatchError",
     "CorpusAssemblyError",
     "PreflightUnavailable",
     "RepositoryCorpus",
+    "SearchHistoryCapability",
+    "UnknownCitationEvidenceError",
+    "answer_question",
     "assemble_repository_corpus",
     "preflight_repository_reference",
 ]

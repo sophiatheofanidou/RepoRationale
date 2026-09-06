@@ -180,3 +180,65 @@ class ChunkArtifactManifest(BaseModel):
         if _SHA256_HEX_DIGEST_PATTERN.fullmatch(value) is None:
             raise ValueError("must be a 64-character lowercase-hex sha256 digest")
         return value
+
+
+# Bumped whenever `VectorIndexManifest`'s own shape changes incompatibly.
+# Separate from `reporationale.adapters.chroma_vector_store`'s
+# `VECTOR_INDEX_ALGORITHM_VERSION`, which is bumped instead when how the
+# Chroma collection itself is built or queried changes.
+VECTOR_INDEX_MANIFEST_SCHEMA_VERSION = 1
+
+# Only one vector-index status exists, named for exactly what it guarantees
+# (embeddings for the complete anchored chunk artifact were persisted in a
+# validated Chroma collection) and nothing about the answering agent or
+# `search_history`, which are separate concerns built on top of it.
+VectorIndexStatus = Literal["vector_index_complete"]
+
+
+class VectorIndexManifest(BaseModel):
+    """Everything needed to verify and reuse one persisted Chroma vector
+    index, stored beneath its parent normalized-source snapshot directory,
+    without reopening the Chroma collection first.
+
+    Anchored to its parent normalized-source snapshot (`source_schema_version`,
+    `sources_digest`) and to the exact derived chunk artifact it was built
+    from (`chunk_schema_version`, `chunker_algorithm_version`, `max_chars`,
+    `chunks_digest`, `chunk_count`), so a vector index can never be silently
+    reused against a chunk artifact it was not actually built from. Frozen
+    and independently validated. Carries no credential and no embedding
+    vector or Chroma-internal data of its own; those remain in the Chroma
+    collection and are validated separately by
+    `reporationale.adapters.chroma_vector_store`.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    manifest_schema_version: _StrictPositiveInt
+    vector_index_algorithm_version: _StrictPositiveInt
+    source_schema_version: _StrictPositiveInt
+    sources_digest: str
+    chunk_schema_version: _StrictPositiveInt
+    chunker_algorithm_version: _StrictPositiveInt
+    max_chars: _StrictPositiveInt
+    chunks_digest: str
+    chunk_count: _StrictNonNegativeInt
+    embedding_model: str = Field(min_length=1)
+    embedding_dimension: _StrictPositiveInt
+    vector_store: Literal["chroma"]
+    vector_store_version: str = Field(min_length=1)
+    distance_metric: Literal["cosine"]
+    indexed_record_count: _StrictNonNegativeInt
+    status: VectorIndexStatus
+
+    @field_validator("sources_digest", "chunks_digest")
+    @classmethod
+    def digest_must_be_a_sha256_hex_digest(cls, value: str) -> str:
+        if _SHA256_HEX_DIGEST_PATTERN.fullmatch(value) is None:
+            raise ValueError("must be a 64-character lowercase-hex sha256 digest")
+        return value
+
+    @model_validator(mode="after")
+    def indexed_record_count_must_match_chunk_count(self) -> "VectorIndexManifest":
+        if self.indexed_record_count != self.chunk_count:
+            raise ValueError("indexed_record_count must equal chunk_count")
+        return self

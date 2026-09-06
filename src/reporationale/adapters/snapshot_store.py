@@ -7,7 +7,12 @@ GitHub's REST API. Depends only on domain contracts
 models); knows nothing about application-level corpus or workflow types.
 The normalized corpus remains canonical, while the chunk corpus is a separate
 derived artifact beneath it. Embeddings and a searchable vector index remain
-outside this boundary.
+outside this boundary, but `reporationale.adapters.chroma_vector_store`
+reuses this module's generic staged-directory publication helpers
+(`write_file_durably`, `backup_path`, `publish_staged_directory`,
+`remove_directory`, `recover_interrupted_replacement`) so every derived
+artifact under a snapshot directory is published and recovered through the
+exact same safe protocol.
 """
 
 import hashlib
@@ -313,7 +318,7 @@ def publish_snapshot(
         resolved_commit_sha=resolved_commit_sha,
         source_schema_version=source_schema_version,
     )
-    _recover_interrupted_replacement(target)
+    recover_interrupted_replacement(target, is_valid=_is_valid_snapshot_directory)
     if target.exists() and not force:
         raise SnapshotAlreadyExists(
             f"A completed snapshot already exists at {target}; pass force=True "
@@ -345,8 +350,8 @@ def publish_snapshot(
             producer_version=producer_version,
         )
 
-        _write_file_durably(staging / _SOURCES_FILENAME, sources_bytes)
-        _write_file_durably(
+        write_file_durably(staging / _SOURCES_FILENAME, sources_bytes)
+        write_file_durably(
             staging / _MANIFEST_FILENAME, manifest.model_dump_json().encode("utf-8")
         )
 
@@ -358,21 +363,21 @@ def publish_snapshot(
             expected_commit_sha=resolved_commit_sha,
         )
 
-        _publish_staged_directory(staging, target)
+        publish_staged_directory(staging, target)
     except BaseException:
-        _remove_directory(staging)
+        remove_directory(staging)
         raise
     return manifest
 
 
-def _write_file_durably(path: Path, payload: bytes) -> None:
+def write_file_durably(path: Path, payload: bytes) -> None:
     with path.open("wb") as handle:
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())
 
 
-def _backup_path(target: Path) -> Path:
+def backup_path(target: Path) -> Path:
     """The one deterministic, exact backup location for `target`'s forced
     replacement — a fixed name adjacent to `target`, not an unbounded,
     UUID-named directory nothing could ever find again after a crash."""
@@ -391,30 +396,35 @@ def _is_valid_snapshot_directory(path: Path) -> bool:
     return True
 
 
-def _recover_interrupted_replacement(target: Path) -> None:
-    """Idempotently recover from a crash during a forced replacement.
+def recover_interrupted_replacement(
+    target: Path, *, is_valid: Callable[[Path], bool]
+) -> None:
+    """Idempotently recover from a crash during a forced replacement of
+    `target` with a staged directory, for any artifact whose publication
+    goes through `publish_staged_directory`.
 
-    A forced replacement moves the previous completed snapshot to
-    `_backup_path(target)`, then moves the newly staged and already-
+    A forced replacement moves the previous completed artifact to
+    `backup_path(target)`, then moves the newly staged and already-
     validated replacement into `target`, then removes the backup. If the
     process is interrupted between the first and second move, `target` is
-    absent and the backup is still the valid previous snapshot: restore
-    it. If it is interrupted between the second move and the final backup
-    removal, both exist and `target` is already the valid new snapshot:
-    discard the stale backup. Called before every lookup and publication,
-    so neither can observe a directory left mid-replacement by an earlier
-    crash. Touches only `target` and `_backup_path(target)` — never scans
-    or modifies any other path.
+    absent and the backup is still the valid previous artifact: restore
+    it (validated with the caller's own `is_valid`). If it is interrupted
+    between the second move and the final backup removal, both exist and
+    `target` is already the valid new artifact: discard the stale backup.
+    Called before every lookup and publication, so neither can observe a
+    directory left mid-replacement by an earlier crash. Touches only
+    `target` and `backup_path(target)` — never scans or modifies any other
+    path.
     """
-    backup = _backup_path(target)
+    backup = backup_path(target)
     if not backup.exists():
         return
     if not target.exists():
-        if _is_valid_snapshot_directory(backup):
+        if is_valid(backup):
             os.rename(backup, target)
         return
-    if _is_valid_snapshot_directory(target):
-        _remove_directory(backup)
+    if is_valid(target):
+        remove_directory(backup)
     # else: both `target` and a backup exist, but `target` fails
     # validation. This cannot arise from this module's own replacement
     # protocol (a completed rename always leaves a valid `target`); leave
@@ -423,11 +433,11 @@ def _recover_interrupted_replacement(target: Path) -> None:
     # repairing or discarding either directory.
 
 
-def _publish_staged_directory(staging: Path, target: Path) -> None:
+def publish_staged_directory(staging: Path, target: Path) -> None:
     """Move `staging` to `target`, replacing an existing completed
-    snapshot at `target` (the caller has already confirmed a replacement
+    artifact at `target` (the caller has already confirmed a replacement
     is authorized) using the fixed backup path a crash can always recover
-    from: move the old directory to `_backup_path(target)` first, then
+    from: move the old directory to `backup_path(target)` first, then
     move the new one into place, restoring the backup if that second move
     fails for any reason, and finally removing the (now stale) backup.
     """
@@ -435,17 +445,17 @@ def _publish_staged_directory(staging: Path, target: Path) -> None:
         os.rename(staging, target)
         return
 
-    backup = _backup_path(target)
+    backup = backup_path(target)
     os.rename(target, backup)
     try:
         os.rename(staging, target)
     except OSError:
         os.rename(backup, target)
         raise
-    _remove_directory(backup)
+    remove_directory(backup)
 
 
-def _remove_directory(path: Path) -> None:
+def remove_directory(path: Path) -> None:
     """Remove exactly `path` — an exact, known directory this module
     itself created moments earlier — and nothing else. Never called with a
     glob, a caller-supplied arbitrary path, or an unresolved path."""
@@ -494,7 +504,7 @@ def look_up_normalized_source_snapshot(
         resolved_commit_sha=resolved_commit_sha,
         source_schema_version=source_schema_version,
     )
-    _recover_interrupted_replacement(directory)
+    recover_interrupted_replacement(directory, is_valid=_is_valid_snapshot_directory)
     if force_rebuild:
         return SnapshotLookupResult(kind="rebuild_requested", directory=directory)
 
@@ -775,17 +785,9 @@ def _is_valid_chunk_artifact_directory(path: Path) -> bool:
 
 def _recover_interrupted_chunk_replacement(target: Path) -> None:
     """The same idempotent crash-recovery protocol as
-    `_recover_interrupted_replacement`, scoped to one chunk artifact
-    directory. Touches only `target` and `_backup_path(target)`."""
-    backup = _backup_path(target)
-    if not backup.exists():
-        return
-    if not target.exists():
-        if _is_valid_chunk_artifact_directory(backup):
-            os.rename(backup, target)
-        return
-    if _is_valid_chunk_artifact_directory(target):
-        _remove_directory(backup)
+    `recover_interrupted_replacement`, scoped to one chunk artifact
+    directory. Touches only `target` and `backup_path(target)`."""
+    recover_interrupted_replacement(target, is_valid=_is_valid_chunk_artifact_directory)
 
 
 def publish_chunk_artifact(
@@ -866,8 +868,8 @@ def publish_chunk_artifact(
             chunks_digest=digest,
         )
 
-        _write_file_durably(staging / _CHUNKS_FILENAME, chunks_bytes)
-        _write_file_durably(
+        write_file_durably(staging / _CHUNKS_FILENAME, chunks_bytes)
+        write_file_durably(
             staging / _CHUNK_MANIFEST_FILENAME,
             manifest.model_dump_json().encode("utf-8"),
         )
@@ -883,9 +885,9 @@ def publish_chunk_artifact(
             expected_max_chars=max_chars,
         )
 
-        _publish_staged_directory(staging, target)
+        publish_staged_directory(staging, target)
     except BaseException:
-        _remove_directory(staging)
+        remove_directory(staging)
         raise
     return manifest
 

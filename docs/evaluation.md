@@ -117,6 +117,14 @@ The BM25 comparison diagnoses where semantic retrieval adds value and where
 exact lexical matching is stronger. It does not create a second product
 retrieval path or change the MVP architecture.
 
+The retrieval-foundation tests use a tiny persisted corpus and hand-authored
+vectors to verify the vector pipeline deterministically: expected evidence is
+ranked first, provenance survives the Chroma round trip, the result count is
+bounded, and a compatible index is reopened without repository re-embedding.
+These are contract and persistence checks, not evidence that Voyage provides
+good semantic retrieval on real repository history. That claim requires the
+reviewed corpus, real Voyage embeddings, and retrieval metrics defined above.
+
 ## 4. Answer evaluation
 
 Answer evaluation checks whether the agent chose the correct outcome and used

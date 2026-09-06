@@ -1,7 +1,7 @@
 # RepoRationale — Implementation Plan and Current State
 
 **Project state:** Implementation  
-**Current milestone:** M3 — Retrieval foundation
+**Current milestone:** M4 — Bounded agentic RAG
 **Last updated:** 2026-09-06
 
 This document is the source of truth for current progress, the active
@@ -10,39 +10,39 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Build the M3 vector retrieval product path
+**Active task:** Plan the first bounded answering-agent slice
 **Task status:** Ready
-**Last completed work:** The second M3 slice is accepted after independent
-Codex review and one minimal correction. It adds a retriever-independent
-`RankedEvidence` contract and a reusable in-memory BM25 baseline over the exact
-persisted chunks. The baseline tokenizes deterministically, precomputes corpus
-statistics once, omits zero-overlap results, preserves full chunk provenance,
-and applies stable score-and-ID ordering. A read-only loader validates the
-normalized snapshot and chunk compatibility before constructing the retriever;
-it writes or rebuilds nothing.
-**Verification performed:** Codex independently ran the five focused lexical
-retrieval tests, Ruff lint and formatting checks, mypy, the complete test suite,
-and `git diff --check`. All checks passed: mypy reported no issues in 56 source
-files and pytest reported 498 passing tests in 1.62 seconds. The only additional
-output was the existing line-ending notice and a sandbox-local pytest cache
-warning. Git status contains only the accepted lexical slice and these
-Codex-owned documentation updates; no generated snapshot, credential, or
-`.local/` file is tracked.
-**Known limitations or deviations:** BM25 is an offline evaluation baseline,
-not the product retriever. It searches chunk text only, applies no stemming,
-stop-word removal, metadata expansion, or persisted lexical index, and its raw
-scores are not probabilities. No embeddings, Chroma index, vector retrieval,
-or `search_history` service exists yet.
-**Open questions or blockers:** None. The final M3 slice still needs to select
-bounded implementation parameters for embedding/index construction and connect
-the vector retriever to the shared ranked-evidence contract.
-**Next action:** Codex prepares one bounded Claude implementation prompt for the
-Voyage embedding boundary, persisted Chroma index, vector-backed
-`search_history`, restart reuse without re-embedding, and focused seed retrieval
-tests as one end-to-end product-retrieval slice.
+**Last completed work:** The retrieval foundation is complete. Its final slice
+adds a project-owned Voyage 4 embedding boundary, a manifest-anchored persistent
+Chroma cosine index, recoverable staged publication, compatibility and
+corruption handling, restart reuse without repository re-embedding, and a
+vector-backed `search_history` service returning the shared `RankedEvidence`
+contract. Chroma writes respect the local client batch limit, while queries map
+stable result IDs back to the canonical persisted chunks.
+**Verification performed:** Codex independently reviewed the implementation and
+correction diff, ran the ten focused embedding/vector tests, Ruff lint and
+formatting checks, mypy, the complete test suite, `git diff --check`, and the
+repository tracking-identifier check. All checks passed: mypy reported no
+issues in 62 source files and pytest reported 508 passing tests. The only
+additional output was a benign Chroma configuration-readback deprecation
+warning, the existing line-ending notices, and a sandbox-local pytest cache
+warning. No live Voyage request or generated repository snapshot was used.
+**Known limitations or deviations:** The deterministic seed vectors prove the
+pipeline and persistence contracts, not real Voyage retrieval quality. No
+similarity threshold, reranking, hybrid product path, incremental indexing,
+agent behaviour, or user interface exists. A live in-process search service and
+a concurrent forced rebuild of its same Chroma directory are outside the
+single-instance MVP contract.
+**Open questions or blockers:** None. The exact Claude model still requires the
+bounded comparison already assigned to the answering milestone, and real
+retrieval quality remains for the reviewed evaluation corpus.
+**Next action:** Codex defines the smallest coherent answering-agent slice for
+the structured answer and citation contracts, `search_history` tool exposure,
+and bounded tool-call loop, states what remains deferred, and prepares one
+bounded Claude implementation prompt before any code changes.
 
-The project now has a tested, repeatable GitHub ingestion and normalized-
-snapshot foundation. M3 builds retrieval artifacts from that canonical local
+The project now has tested, repeatable ingestion and retrieval foundations.
+The completed retrieval work derives its artifacts from the canonical local
 corpus without reopening the GitHub ingestion scope.
 
 Agreed product boundaries are recorded in `project.md`. Accepted and proposed
@@ -63,9 +63,9 @@ source-aware chunk (D-021). Users supply their own external-service credentials
 
 ## 2. Immediate next steps
 
-1. Add the Voyage embedding pipeline, persisted Chroma vector index,
-   vector-backed `search_history` service, restart reuse without re-embedding,
-   and seed retrieval tests as one end-to-end product-retrieval slice.
+1. Plan the first bounded answering-agent slice around structured outcomes,
+   citation safety, `search_history` tool exposure, and the maximum tool-call
+   boundary without adding UI or evaluation work.
 
 ## 3. Milestones
 
@@ -156,7 +156,7 @@ Exit criteria:
 
 ### M3 — Retrieval foundation
 
-**Status:** Active
+**Status:** Complete
 
 **Goal:** Retrieve relevant evidence independently of answer generation.
 

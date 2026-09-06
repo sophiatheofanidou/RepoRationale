@@ -151,12 +151,44 @@ treats punctuation and underscores as separators, and applies no stemming,
 stop-word removal, metadata expansion, or query expansion. Results with no
 lexical overlap are omitted rather than returned with arbitrary zero scores.
 
-Both lexical and future vector retrieval return the shared `RankedEvidence`
+Both lexical and vector retrieval return the shared `RankedEvidence`
 contract: a stable evidence ID matching the nested chunk ID, a one-based rank,
 a finite raw score, and an extensible score-kind label. Raw scores retain their
 retriever-specific meaning and are not probabilities or directly comparable
 across retrieval methods. Equal BM25 scores are ordered by stable chunk ID, so
 repeated searches remain deterministic.
+
+### Vector retrieval product path
+
+The product retrieval path embeds each persisted chunk with Voyage 4 using
+document input semantics and stores the supplied vectors in a local persistent
+Chroma collection configured for cosine distance. Query text is embedded
+separately with query input semantics. Chroma never creates embeddings itself,
+and its SDK types remain inside the embedding and vector-storage adapters.
+
+The vector-index manifest anchors the collection to the exact normalized-source
+and chunk digests, schema and algorithm versions, chunk-size parameter,
+embedding model and dimension, Chroma version, distance metric, and record
+count. Reuse requires both compatible metadata and validation of the persisted
+collection. Corrupted artifacts fail explicitly rather than silently causing a
+paid rebuild; missing or genuinely incompatible artifacts may be rebuilt from
+the canonical chunks.
+
+Index construction writes to a staged directory, validates the reopened Chroma
+collection, and only then replaces the active vector artifact through the same
+recoverable publication protocol used by the other snapshot artifacts. Chroma
+records are inserted in batches no larger than the local client's reported
+limit. A failed rebuild therefore leaves the previous completed index reusable,
+and restarting the application can reopen a compatible index without embedding
+the repository again.
+
+The `search_history` application service accepts only non-blank query text and
+returns at most five `RankedEvidence` results. Each result is mapped by stable
+chunk ID back to the canonical persisted `SourceChunk`, rather than reconstructing
+provenance from Chroma metadata. Its raw score is cosine distance, where smaller
+values rank earlier; it is not a probability and is not numerically comparable
+with a BM25 score. Similarity thresholds and evidence-sufficiency decisions
+belong to the answering lifecycle rather than retrieval storage.
 
 ## 3. Question-answering lifecycle
 

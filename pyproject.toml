@@ -9,8 +9,10 @@ description = "Evidence-grounded agentic RAG for recovering the rationale behind
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "chromadb>=1.5.9",
     "httpx>=0.28.1",
     "pydantic-settings>=2.15.0",
+    "voyageai>=0.5.0",
 ]
 
 [tool.setuptools.packages.find]

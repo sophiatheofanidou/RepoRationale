@@ -10,36 +10,36 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Define the M3 lexical retrieval baseline and evidence-result
-contract
+**Active task:** Build the M3 vector retrieval product path
 **Task status:** Ready
-**Last completed work:** The first M3 slice is accepted after independent Codex
-review and one focused correction pass. It adds a provider-independent
-`SourceChunk` with stable source-and-position identity, deterministic
-Markdown-aware and paragraph-aware splitting, and a reusable derived chunk
-artifact beneath the validated normalized-source snapshot. The artifact is
-anchored to the canonical source digest, records schema and chunker
-compatibility, and is published, loaded, reused, or explicitly rebuilt without
-rewriting `manifest.json` or `sources.jsonl` and without calling GitHub.
-**Verification performed:** Codex independently ran the 15 focused chunk tests,
-Ruff lint and formatting checks, mypy, the complete test suite, and
-`git diff --check`. All checks passed: mypy reported no issues in 53 source
-files and pytest reported 493 passing tests in 1.53 seconds. The only output
-outside clean results was the existing line-ending notice and a sandbox-local
-pytest cache warning. Git status contains only the accepted slice and these
-Codex-owned documentation updates; no credential, generated snapshot, index,
-or `.local/` file is tracked.
-**Known limitations or deviations:** No project-wide chunk size or overlap has
-been selected. Markdown splitting is a small deterministic structural scanner,
-not a complete CommonMark parser. Chunks are persisted but are not yet
-searchable; no lexical index, embeddings, vector index, or retrieval service
-exists.
-**Open questions or blockers:** None. The lexical baseline still needs a small
-retrieval-result contract whose provenance can also be reused by the later
-vector product path.
-**Next action:** Codex prepares one bounded Claude implementation prompt for a
-BM25 lexical baseline over the persisted chunks and a shared ranked-evidence
-result contract, with only focused deterministic retrieval tests.
+**Last completed work:** The second M3 slice is accepted after independent
+Codex review and one minimal correction. It adds a retriever-independent
+`RankedEvidence` contract and a reusable in-memory BM25 baseline over the exact
+persisted chunks. The baseline tokenizes deterministically, precomputes corpus
+statistics once, omits zero-overlap results, preserves full chunk provenance,
+and applies stable score-and-ID ordering. A read-only loader validates the
+normalized snapshot and chunk compatibility before constructing the retriever;
+it writes or rebuilds nothing.
+**Verification performed:** Codex independently ran the five focused lexical
+retrieval tests, Ruff lint and formatting checks, mypy, the complete test suite,
+and `git diff --check`. All checks passed: mypy reported no issues in 56 source
+files and pytest reported 498 passing tests in 1.62 seconds. The only additional
+output was the existing line-ending notice and a sandbox-local pytest cache
+warning. Git status contains only the accepted lexical slice and these
+Codex-owned documentation updates; no generated snapshot, credential, or
+`.local/` file is tracked.
+**Known limitations or deviations:** BM25 is an offline evaluation baseline,
+not the product retriever. It searches chunk text only, applies no stemming,
+stop-word removal, metadata expansion, or persisted lexical index, and its raw
+scores are not probabilities. No embeddings, Chroma index, vector retrieval,
+or `search_history` service exists yet.
+**Open questions or blockers:** None. The final M3 slice still needs to select
+bounded implementation parameters for embedding/index construction and connect
+the vector retriever to the shared ranked-evidence contract.
+**Next action:** Codex prepares one bounded Claude implementation prompt for the
+Voyage embedding boundary, persisted Chroma index, vector-backed
+`search_history`, restart reuse without re-embedding, and focused seed retrieval
+tests as one end-to-end product-retrieval slice.
 
 The project now has a tested, repeatable GitHub ingestion and normalized-
 snapshot foundation. M3 builds retrieval artifacts from that canonical local
@@ -63,11 +63,9 @@ source-aware chunk (D-021). Users supply their own external-service credentials
 
 ## 2. Immediate next steps
 
-1. Add the lexical retrieval baseline and shared evidence-result contract over
-   the persisted chunks.
-2. Add the Voyage embedding pipeline, persisted Chroma vector index,
-   vector-backed `search_history` service, and seed retrieval tests as one
-   end-to-end product-retrieval slice.
+1. Add the Voyage embedding pipeline, persisted Chroma vector index,
+   vector-backed `search_history` service, restart reuse without re-embedding,
+   and seed retrieval tests as one end-to-end product-retrieval slice.
 
 ## 3. Milestones
 

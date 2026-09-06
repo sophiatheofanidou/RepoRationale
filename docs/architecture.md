@@ -142,6 +142,22 @@ before atomically replacing only that derived directory. The parent
 `manifest.json` and canonical `sources.jsonl` remain unchanged, and a complete
 chunk artifact still does not mean that a searchable vector index is ready.
 
+### Lexical retrieval baseline
+
+The offline lexical baseline loads the same validated persisted chunks intended
+for vector retrieval and builds a reusable in-memory BM25 representation. Its
+small deterministic tokenizer case-folds Unicode letter and digit sequences,
+treats punctuation and underscores as separators, and applies no stemming,
+stop-word removal, metadata expansion, or query expansion. Results with no
+lexical overlap are omitted rather than returned with arbitrary zero scores.
+
+Both lexical and future vector retrieval return the shared `RankedEvidence`
+contract: a stable evidence ID matching the nested chunk ID, a one-based rank,
+a finite raw score, and an extensible score-kind label. Raw scores retain their
+retriever-specific meaning and are not probabilities or directly comparable
+across retrieval methods. Equal BM25 scores are ordered by stable chunk ID, so
+repeated searches remain deterministic.
+
 ## 3. Question-answering lifecycle
 
 Once a snapshot is ready, each question follows this workflow:

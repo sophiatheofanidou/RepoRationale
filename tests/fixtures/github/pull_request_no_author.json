@@ -1,0 +1,14 @@
+{
+  "id": 987654323,
+  "number": 3,
+  "state": "closed",
+  "title": "Legacy contribution",
+  "body": "   ",
+  "html_url": "https://github.com/octo-org/example-repo/pull/3",
+  "created_at": "2022-05-01T08:00:00Z",
+  "updated_at": "2022-05-02T09:00:00Z",
+  "closed_at": "2022-05-02T09:00:00Z",
+  "merged_at": "2022-05-02T09:00:00Z",
+  "merge_commit_sha": "0000000000000000000000000000000000000f",
+  "user": null
+}

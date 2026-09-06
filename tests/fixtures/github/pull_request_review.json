@@ -1,0 +1,14 @@
+{
+  "id": 501,
+  "body": "Looks great, thanks for the fix!",
+  "state": "APPROVED",
+  "html_url": "https://github.com/octo-org/example-repo/pull/42#pullrequestreview-501",
+  "pull_request_url": "https://api.github.com/repos/octo-org/example-repo/pulls/42",
+  "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "submitted_at": "2024-01-11T11:00:00Z",
+  "user": {
+    "login": "reviewer1",
+    "type": "User"
+  },
+  "author_association": "COLLABORATOR"
+}

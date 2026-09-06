@@ -1,0 +1,17 @@
+{
+  "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "html_url": "https://github.com/octo-org/example-repo/commit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "url": "https://api.github.com/repos/octo-org/example-repo/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "commit": {
+    "message": "Fix the retry bug\n\nDetailed explanation of the fix.",
+    "author": {
+      "name": "Jane Doe",
+      "email": "jane@example.com",
+      "date": "2024-01-01T00:00:00Z"
+    }
+  },
+  "author": {
+    "login": "janedoe",
+    "type": "User"
+  }
+}

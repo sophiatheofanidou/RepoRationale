@@ -1,0 +1,14 @@
+{
+  "id": 801,
+  "body": "I can reproduce this on macOS too.",
+  "html_url": "https://github.com/octo-org/example-repo/issues/10#issuecomment-801",
+  "url": "https://api.github.com/repos/octo-org/example-repo/issues/comments/801",
+  "issue_url": "https://api.github.com/repos/octo-org/example-repo/issues/10",
+  "created_at": "2024-01-01T05:00:00Z",
+  "updated_at": "2024-01-01T05:00:00Z",
+  "user": {
+    "login": "another-user",
+    "type": "User"
+  },
+  "author_association": "NONE"
+}

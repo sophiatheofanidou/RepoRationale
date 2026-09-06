@@ -1,0 +1,17 @@
+{
+  "id": 987654321,
+  "number": 42,
+  "state": "closed",
+  "title": "Fix flaky retry logic",
+  "body": "This fixes the flaky retry logic described in #40.\n\nSee discussion below.",
+  "html_url": "https://github.com/octo-org/example-repo/pull/42",
+  "created_at": "2024-01-10T09:00:00Z",
+  "updated_at": "2024-01-12T15:30:00Z",
+  "closed_at": "2024-01-12T15:30:00Z",
+  "merged_at": "2024-01-12T15:30:00Z",
+  "merge_commit_sha": "abc123def456abc123def456abc123def456abc1",
+  "user": {
+    "login": "octocat",
+    "type": "User"
+  }
+}

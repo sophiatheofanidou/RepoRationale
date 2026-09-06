@@ -1,0 +1,11 @@
+{
+  "id": 999999,
+  "name": "new-repo-name",
+  "full_name": "new-owner-name/new-repo-name",
+  "html_url": "https://github.com/new-owner-name/new-repo-name",
+  "private": false,
+  "default_branch": "main",
+  "owner": {
+    "login": "new-owner-name"
+  }
+}

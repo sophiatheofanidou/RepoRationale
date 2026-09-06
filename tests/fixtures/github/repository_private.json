@@ -1,0 +1,11 @@
+{
+  "id": 654321,
+  "name": "internal-repo",
+  "full_name": "octo-org/internal-repo",
+  "html_url": "https://github.com/octo-org/internal-repo",
+  "private": true,
+  "default_branch": "main",
+  "owner": {
+    "login": "octo-org"
+  }
+}

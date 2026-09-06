@@ -1,0 +1,17 @@
+{
+  "id": 701,
+  "number": 10,
+  "title": "Crash on startup with empty config",
+  "body": "Steps to reproduce:\n1. Remove config file\n2. Start the app",
+  "state": "closed",
+  "state_reason": "completed",
+  "html_url": "https://github.com/octo-org/example-repo/issues/10",
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-02T00:00:00Z",
+  "closed_at": "2024-01-02T00:00:00Z",
+  "user": {
+    "login": "reporter",
+    "type": "User"
+  },
+  "author_association": "NONE"
+}

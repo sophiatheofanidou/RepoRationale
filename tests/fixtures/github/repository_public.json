@@ -1,0 +1,11 @@
+{
+  "id": 123456,
+  "name": "example-repo",
+  "full_name": "octo-org/example-repo",
+  "html_url": "https://github.com/octo-org/example-repo",
+  "private": false,
+  "default_branch": "main",
+  "owner": {
+    "login": "octo-org"
+  }
+}

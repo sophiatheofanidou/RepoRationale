@@ -285,6 +285,14 @@ report. Staged publication and reload validation prevent a partial write from
 appearing complete. Semantic loading requires the corresponding reviewed
 question set so tampered or mismatched summaries and reports are rejected.
 
+A thin application runner converts outputs from the existing BM25,
+Voyage/Chroma, and bounded-answering services into those raw per-case records.
+It constructs no provider client and reads no credential; paid retrieval and
+answering paths require an explicit caller confirmation, execute cases
+sequentially, and perform no retry. Selecting development versus held-out cases
+remains an orchestration responsibility so the held-out set is not exposed
+during parameter tuning.
+
 ## 4. Architecture roles and MVP technologies
 
 The lifecycles above define the technology-independent architecture. The MVP

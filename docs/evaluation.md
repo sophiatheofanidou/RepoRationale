@@ -102,6 +102,17 @@ A human reviewer must confirm that ground truth from the original repository
 history; system-generated answers cannot establish their own expected
 evidence.
 
+The Gson question-set version 1 now contains that 4+8 split: three answerable
+and one insufficient-evidence development case, plus six answerable and two
+insufficient-evidence held-out cases. Codex reviewed every expected source
+against the pinned normalized corpus. One draft case was corrected during that
+review: it now asks why a Date-format change was proposed, because its source
+explicitly says the proposal had not been accepted at the pinned revision. The
+notes for two negative controls were also narrowed after independent corpus
+search found related Gradle and asynchronous-history records that did not
+support the controls' more specific premises. The held-out questions have not
+been submitted to any retriever or answering model.
+
 ## 3. Retrieval evaluation
 
 Retrieval is measured independently of answer generation. Vector retrieval and
@@ -135,6 +146,17 @@ bounded, and a compatible index is reopened without repository re-embedding.
 These are contract and persistence checks, not evidence that Voyage provides
 good semantic retrieval on real repository history. That claim requires the
 reviewed corpus, real Voyage embeddings, and retrieval metrics defined above.
+
+### Gson development BM25 pilot
+
+The offline BM25 baseline ran only the three answerable development questions
+at the fixed top-five limit. It retrieved the direct design-document rationale
+at rank one and missed both the semantic reword and the issue-comment case
+chosen to exercise query refinement. The insufficient-evidence development
+control was not retrieval-scored, and no held-out question was queried. This
+1/3 Hit@5 result is a development diagnostic, not the final lexical score; it
+establishes concrete misses for the Voyage comparison without changing their
+ground truth after observation.
 
 ### Development chunk-size calibration
 
@@ -537,6 +559,25 @@ requests. The runtime caps cover volume that cannot be estimated cheaply, such
 as comments and reviews; the request cap is a total per-build budget rather
 than a substitute for rate-limit handling.
 
+The selected Gson experiment used explicit run-specific ceilings of 3,500
+combined issue/pull-request roots, 1,500 closed pull requests, 2,500 commits,
+500 tree entries, 15,000 normalized sources, and 2,000 collection requests. At
+the pinned commit `b3f4ca20087f9066de4c340522ff84e0558e1ad1`, the successful
+third attempt produced 13,893 sources in about 290 seconds using 1,406 GitHub
+requests including repository lookup. Source collection accounted for 1,371
+requests and about 262 seconds; the normalized snapshot occupied 19,248,406
+bytes. Offline chunking at 2,000 characters produced 17,479 deterministic
+chunks in about 2.5 seconds and a 23,278,322-byte chunk artifact.
+
+The first two attempts failed late on one valid commit with a blank message;
+neither published a snapshot. The adapter now treats blank commit messages as
+non-rationale content, consistently with other empty discussion bodies. The
+successful snapshot is complete for normalized non-blank sources, but its local
+artifacts cannot reconstruct the exact number or identities of blank-message
+commits skipped. The final indexing report must disclose that measurement gap;
+it must not claim that no items were skipped. These measurements justify the
+evaluation run but do not by themselves change the product's default limits.
+
 Repeated builds and immediate reuse preserved stable unique identities and the
 same corpus digest; failed or malformed collection never published a completed
 snapshot. The two completed samples do not establish general production
@@ -620,7 +661,10 @@ atomically: `run-manifest.json`, `indexing.json`,
 `retrieval-results.jsonl`, `answer-results.jsonl`, `summary.json`, and
 `report.md`. Loading a run with its reviewed question set recomputes the
 summary and report and rejects cross-artifact disagreement. Live workflow
-integration remains a separate step.
+integration now has a thin raw-result runner with an explicit paid-mode gate.
+The next contract correction is to record and enforce the selected development
+or held-out split in each published run; until then, development pilots remain
+clearly labelled private pilot artifacts rather than complete evaluation runs.
 
 ### Visual evidence to add later
 

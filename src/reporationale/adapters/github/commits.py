@@ -1,9 +1,11 @@
 """Normalization of default-branch commit messages into `SourceDocument`.
 
 Validates each record returned by GitHub's "List commits" REST endpoint
-strictly, and maps each to one platform-independent `SourceDocument` while
-preserving platform-native terminology. Deliberately does not model or persist
-the commit author's email address.
+strictly, and maps each non-blank-message commit to one platform-independent
+`SourceDocument` while preserving platform-native terminology. A commit with
+a blank message documents no rationale and is skipped rather than
+normalized (see `parse_commit`). Deliberately does not model or persist the
+commit author's email address.
 """
 
 import re
@@ -21,6 +23,7 @@ from pydantic import (
 from reporationale.adapters.github._shared import (
     TRUSTED_API_HOSTNAME,
     GitHubUserResponse,
+    describe_validation_error,
     parse_github_timestamp,
     require_github_platform,
     validate_github_url,
@@ -62,19 +65,21 @@ class _GitHubGitAuthorResponse(BaseModel):
 
 
 class _GitHubCommitDetailResponse(BaseModel):
-    """The subset of a commit's nested `commit` object that is used."""
+    """The subset of a commit's nested `commit` object that is used.
+
+    `message` may legitimately be blank or whitespace-only: Git itself
+    permits an empty commit message (for example, one created with `git
+    commit --allow-empty-message`), and this has been observed on a real,
+    otherwise well-formed commit record. Such a commit documents no
+    rationale, so `parse_commit` skips it rather than treating it as a
+    malformed response -- the same way an empty issue/PR comment or review
+    body is already skipped elsewhere in this adapter.
+    """
 
     model_config = ConfigDict(extra="ignore", strict=True)
 
-    message: str = Field(min_length=1)
+    message: str
     author: _GitHubGitAuthorResponse
-
-    @field_validator("message")
-    @classmethod
-    def message_must_not_be_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("commit message must not be blank")
-        return value
 
 
 class _GitHubCommitResponse(BaseModel):
@@ -102,19 +107,24 @@ class _GitHubCommitResponse(BaseModel):
         return value
 
 
-def parse_commit(raw_item: object, *, identity: RepositoryIdentity) -> SourceDocument:
-    """Validate one commit-list record and return its normalized
-    `SourceDocument`.
+def parse_commit(
+    raw_item: object, *, identity: RepositoryIdentity
+) -> tuple[str, SourceDocument | None]:
+    """Validate one commit-list record and normalize it if its message is
+    non-blank. Always returns the commit's deterministic `source_id`, even
+    when skipped for a blank message -- mirroring
+    `reporationale.adapters.github.issue.parse_issue_comment` -- so the
+    caller's cross-page duplicate-identity check still covers a skipped
+    commit.
 
     Rejects a non-GitHub `identity` immediately. Raises
     `GitHubMalformedResponse` for any type, value, or canonical-URL
     mismatch (including a SHA that does not match the one embedded in
     `html_url`/`url`), only after the originating `except` block has fully
-    exited.
-
-    Unlike comments/reviews, a commit is never "empty": GitHub rejects
-    commits with a blank message, so this always returns a document rather
-    than a `(source_id, document | None)` pair.
+    exited. A schema mismatch's message includes a per-field diagnostic
+    summary (see `describe_validation_error`) -- the failing field path,
+    reason, and error type for every issue, but never the raw offending
+    response value.
     """
     require_github_platform(identity)
 
@@ -123,8 +133,11 @@ def parse_commit(raw_item: object, *, identity: RepositoryIdentity) -> SourceDoc
 
     try:
         parsed = _GitHubCommitResponse.model_validate(raw_item)
-    except ValidationError:
-        malformed_reason = "The GitHub API commit response failed validation."
+    except ValidationError as error:
+        malformed_reason = (
+            "The GitHub API commit response failed validation: "
+            + describe_validation_error(error)
+        )
 
     if malformed_reason is None and parsed is not None:
         try:
@@ -153,6 +166,11 @@ def parse_commit(raw_item: object, *, identity: RepositoryIdentity) -> SourceDoc
     if parsed is None:
         raise AssertionError("unreachable: parsed or malformed_reason must be set")
 
+    source_id = f"github:{identity.owner}/{identity.name}:commit:{parsed.sha}"
+
+    if not parsed.commit.message.strip():
+        return source_id, None
+
     metadata: dict[str, JsonValue] = {
         "sha": parsed.sha,
         "author_date": parsed.commit.author.date.isoformat(),
@@ -161,8 +179,8 @@ def parse_commit(raw_item: object, *, identity: RepositoryIdentity) -> SourceDoc
         "author_type": parsed.author.type if parsed.author is not None else None,
     }
 
-    return SourceDocument(
-        source_id=f"github:{identity.owner}/{identity.name}:commit:{parsed.sha}",
+    document = SourceDocument(
+        source_id=source_id,
         platform="github",
         repository=identity.repository,
         source_type="commit",
@@ -175,3 +193,4 @@ def parse_commit(raw_item: object, *, identity: RepositoryIdentity) -> SourceDoc
         title=None,
         metadata=metadata,
     )
+    return source_id, document

@@ -313,6 +313,20 @@ def test_list_commits_uses_default_branch_and_deduplicates() -> None:
     assert len(documents) == 1
 
 
+def test_list_commits_excludes_a_blank_message_commit() -> None:
+    blank_commit = {
+        **load_fixture("commit.json"),
+        "commit": {**load_fixture("commit.json")["commit"], "message": "   "},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return json_response(200, [blank_commit])
+
+    documents = _client(mock_transport(handler)).list_commits(_IDENTITY, "main")
+
+    assert documents == []
+
+
 def test_list_commits_rejects_duplicate_sha_across_pages() -> None:
     commit = load_fixture("commit.json")
     next_url = "https://api.github.com/repos/octo-org/example-repo/commits?page=2"

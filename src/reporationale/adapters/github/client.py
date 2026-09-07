@@ -594,7 +594,8 @@ class GitHubClient:
         resolved Markdown tree disagree about which revision they describe.
 
         Fails the entire collection if any page or commit is malformed, or
-        if GitHub returns a repeated commit SHA across pages.
+        if GitHub returns a repeated commit SHA across pages (including one
+        later skipped for a blank message).
         """
         require_github_platform(identity)
 
@@ -610,13 +611,14 @@ class GitHubClient:
         documents: list[SourceDocument] = []
         seen_source_ids: set[str] = set()
         for raw_item in raw_items:
-            document = parse_commit(raw_item, identity=identity)
-            if document.source_id in seen_source_ids:
+            source_id, document = parse_commit(raw_item, identity=identity)
+            if source_id in seen_source_ids:
                 raise GitHubMalformedResponse(
                     "GitHub returned a repeated commit identity across pages."
                 )
-            seen_source_ids.add(document.source_id)
-            documents.append(document)
+            seen_source_ids.add(source_id)
+            if document is not None:
+                documents.append(document)
         return documents
 
     def resolve_commit_and_tree(

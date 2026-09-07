@@ -29,6 +29,28 @@ TRUSTED_HTML_HOSTNAME = "github.com"
 TRUSTED_API_HOSTNAME = "api.github.com"
 
 
+def describe_validation_error(error: ValidationError) -> str:
+    """A short, non-secret diagnostic summary of one pydantic
+    `ValidationError`: the failing field path, message, and error type for
+    every reported issue, joined into one string.
+
+    Deliberately excludes both the documentation URL (`include_url=False`)
+    and, more importantly, the raw offending value (`include_input=False`):
+    a validation failure's `input` can otherwise embed arbitrary repository
+    content (a commit message, a comment body, and similar) into an
+    exception message, which every typed failure in
+    `reporationale.adapters.github.errors` is documented to never carry.
+    Used to enrich an adapter parser's own fixed `GitHubMalformedResponse`
+    reason with enough detail to diagnose which field of a specific
+    response shape failed and why, without that risk.
+    """
+    parts = []
+    for issue in error.errors(include_url=False, include_input=False):
+        location = ".".join(str(segment) for segment in issue["loc"]) or "<root>"
+        parts.append(f"{location}: {issue['msg']} ({issue['type']})")
+    return "; ".join(parts)
+
+
 def require_github_platform(identity: RepositoryIdentity) -> None:
     """Reject a non-GitHub identity before it can produce a GitHub-namespaced
     `SourceDocument`.

@@ -10,33 +10,42 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Design the M5 evaluation harness and artifact contract
-**Task status:** Complete
-**Last completed work:** The offline evaluation-harness foundation is accepted.
-It provides a strictly validated versioned question set, raw indexing,
-retrieval, and answer records, deterministic top-five retrieval and answer
-aggregates, a readable Markdown report, and atomic publication of six local
-run artifacts. Summary and report data are derived and revalidated by the
-application workflow; the persistence adapter remains limited to storage and
-has no application-layer dependency. An architecture test protects that
-direction. The selected main corpus remains `google/gson`, with
-`serilog/serilog` as fallback and a target of four development plus eight
-held-out questions.
-**Verification performed:** The focused evaluation and architecture tests pass
-84 tests; the full suite passes 616 tests; Ruff check, Ruff format check, and
-mypy pass. The review verified top-five boundaries, derived summary/report
-consistency, schema-version rejection, cross-artifact validation, atomic
-cleanup, and report measurements. No GitHub, Voyage, Chroma, or Anthropic call
-was made during implementation or review.
-**Known limitations or deviations:** The harness foundation does not yet invoke
-the real ingestion, retrieval, or answering workflows. Gson exceeds the current
-runtime envelope and no Gson snapshot or question set exists yet.
-**Open questions or blockers:** None blocking. Exact paid-call counts, current
-provider prices, cost ceilings, and stop conditions will be calculated from
-validated source and chunk artifacts before their respective live stages.
-**Next action:** Present the exact bounded Gson normalized-source build plan,
-experimental limits, output location, and stop conditions for user approval;
-do not start the live GitHub run before that approval.
+**Active task:** Complete split-safe orchestration and evaluate the Gson vector index
+**Task status:** Ready
+**Last completed work:** The pinned `google/gson` normalized-source build,
+offline corpus characterization, deterministic chunk artifact, reviewed
+question-set version 1, and development-only BM25 pilot are complete. The
+snapshot at `b3f4ca20087f9066de4c340522ff84e0558e1ad1` contains 13,893 normalized
+sources and produces 17,479 chunks at the selected 2,000-character maximum.
+The BM25 pilot hit one of three answerable development cases at rank one and
+missed the semantic-reword and query-refinement cases. A thin evaluation
+runner now connects the existing BM25, Voyage/Chroma, and answering workflows
+to the raw evaluation records, with an explicit paid-mode gate and no retries.
+**Verification performed:** Codex reviewed the implementation diff and each
+expected source in the question set, corrected one question whose wording
+incorrectly treated a proposal as an adopted change, corrected two negative-
+control notes that overstated what their search terms established, and
+independently ran the full suite (629 passed), Ruff, and mypy successfully. The
+offline pilot touched only development cases. No Voyage, Chroma-build, or
+Anthropic call was made.
+**Known limitations or deviations:** The successful ingestion required
+run-specific limits above the product defaults; no permanent limit change has
+been accepted. Blank commit messages are valid Git data and are now excluded as
+non-rationale content, but the completed snapshot cannot reconstruct the exact
+count or identities skipped. The source build remains usable, while the final
+indexing report must disclose this measurement gap rather than record zero
+skips.
+**Open questions or blockers:** The raw runner deliberately accepts caller-
+selected cases, but the published run contract does not yet record or enforce
+whether a run covers the development or held-out split. That must be corrected
+before partial results can be presented as a complete evaluation run. Paid
+Voyage indexing and development retrieval also require explicit user approval.
+Retrieval-quality targets cannot be fixed until that development comparison is
+complete; held-out retrieval and all Anthropic answering remain gated afterward.
+**Next action:** Add and test an explicit split to the evaluation-run manifest,
+summary, publication, and loading validation; then, after explicit approval,
+run the bounded Voyage document-index and development-only retrieval stage.
+Do not query any held-out case or call Anthropic.
 
 The project now has tested, repeatable ingestion, retrieval, and bounded
 agentic-answering foundations, including a completed and recorded Claude
@@ -62,13 +71,16 @@ external-service credentials (D-022). The earlier evaluation-corpus deferral
 
 ## 2. Immediate next steps
 
-1. Define the exact complete Gson normalized-source build command, experimental
-   limits, private output location, and failure stops; obtain explicit approval
-   before making the live GitHub calls.
-2. Review the resulting source counts, request use, phase timings, snapshot
-   size, and failure behaviour before proposing any permanent limit change.
-3. Inspect the completed corpus and author the four development and eight
-   held-out reviewed questions before any retrieval or answering evaluation.
+1. Make evaluation-run publication explicitly split-aware so a development-
+   only artifact cannot be reported as a complete 12-case run.
+2. Build the Gson Voyage/Chroma index from the validated 17,479-chunk artifact
+   under an explicit spend ceiling, recording requests, tokens, cost, phase
+   timing, size, and any failure.
+3. Run only the four development cases through vector retrieval, compare the
+   three answerable cases with BM25, and test a bounded refinement only on the
+   designated development case.
+4. Fix numeric targets and stop conditions from the development results before
+   requesting separate approval for held-out retrieval or Anthropic answering.
 
 ## 3. Milestones
 

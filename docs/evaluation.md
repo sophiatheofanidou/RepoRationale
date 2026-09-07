@@ -35,26 +35,33 @@ not return evidence that supports it.
 
 ## 2. Corpus and question set
 
-### Selecting a corpus
+### Selected corpus
 
-The final evaluation corpus will be selected after the real ingestion pipeline
-can measure the shortlisted repositories. A suitable repository must:
+The main external evaluation corpus is
+[`google/gson`](https://github.com/google/gson). It was selected after
+read-only measurements across recognizable repositories in several languages.
+A suitable repository must:
 
-- pass preflight and fit the tested complete-corpus limits;
+- fit a measured, reviewed complete-corpus envelope;
 - contain explicit rationale in the source types supported by the MVP;
 - contain enough source variety to exercise normalization and citations;
 - allow a reviewer to establish expected evidence without guessing intent; and
 - be understandable and recognizable in a portfolio demonstration.
 
-The provisional candidates serve different purposes:
+Gson is recognizable, has a varied supported history, and contains explicit
+repository-native Markdown rationale, including `GsonDesignDocument.md`. Its
+measured workload exceeds the conservative initial admission envelope, so its
+first complete source build is an evaluation experiment with explicit
+run-specific ceilings rather than evidence that the product defaults already
+support it. `serilog/serilog` is the fallback if complete ingestion or
+ground-truth review makes Gson impractical.
+
+The other repositories retain only these supporting roles:
 
 | Candidate | Evaluation role |
 | --- | --- |
 | [`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer) | Author-owned companion repository for controlled dogfooding and development, with familiar Markdown decisions and commit history |
-| [`psf/black`](https://github.com/psf/black) | Leading smaller main-corpus candidate |
-| [`BurntSushi/ripgrep`](https://github.com/BurntSushi/ripgrep) | Smaller-to-moderate non-Python alternative |
-| [`pydantic/pydantic`](https://github.com/pydantic/pydantic) | Larger ingestion and retrieval stress candidate |
-| [`prettier/prettier`](https://github.com/prettier/prettier) | Larger non-Python stress candidate |
+| [`serilog/serilog`](https://github.com/serilog/serilog) | Fallback main corpus if Gson proves impractical |
 | [`microsoft/vscode`](https://github.com/microsoft/vscode) | Deliberately oversized preflight-rejection case |
 
 [`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer)
@@ -88,12 +95,12 @@ The question set will cover:
 - answerable questions whose first retrieval is intentionally weak; and
 - unanswerable questions with no verified documented rationale.
 
-Keep the MVP evaluation lean: use approximately 10–15 reviewed questions in
-total, with a small development subset and questions not used for tuning. The
-exact composition is finalized after corpus validation so every selected case
-has trustworthy ground truth. A human reviewer must confirm that ground truth
-from the original repository history; system-generated answers cannot
-establish their own expected evidence.
+Keep the MVP evaluation lean: target 12 reviewed questions, with four
+development cases and eight held-out cases. The exact composition is finalized
+after corpus validation so every selected case has trustworthy ground truth.
+A human reviewer must confirm that ground truth from the original repository
+history; system-generated answers cannot establish their own expected
+evidence.
 
 ## 3. Retrieval evaluation
 
@@ -606,6 +613,14 @@ calculate the retrieval metrics, collect timings and usage, and generate a
 readable local report. Detailed traces and model outputs remain under
 private local storage; aggregate findings are added to this document so they
 can be reviewed without reading raw files.
+
+The offline artifact foundation now validates the question-set and run schemas,
+computes aggregates only from raw case records, and publishes six local files
+atomically: `run-manifest.json`, `indexing.json`,
+`retrieval-results.jsonl`, `answer-results.jsonl`, `summary.json`, and
+`report.md`. Loading a run with its reviewed question set recomputes the
+summary and report and rejects cross-artifact disagreement. Live workflow
+integration remains a separate step.
 
 ### Visual evidence to add later
 

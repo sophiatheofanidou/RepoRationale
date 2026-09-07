@@ -269,6 +269,22 @@ evidence IDs, sufficiency decisions, missing-information notes, call latency,
 model usage, and the model and agent versions needed by later evaluation. Run
 traces are not persisted at this stage.
 
+### Evaluation artifact lifecycle
+
+The offline evaluation foundation keeps semantic orchestration in the
+application layer. It validates the versioned question set and cross-artifact
+identity, computes retrieval and answering aggregates from raw case results,
+renders the Markdown report, and rechecks both derived artifacts when a run is
+loaded. The filesystem adapter only parses, serializes, and atomically
+publishes the six run files; it does not calculate metrics or depend on
+application modules.
+
+A completed local run contains a manifest, indexing measurements, retrieval
+and answer JSON Lines records, a computed summary, and a computed Markdown
+report. Staged publication and reload validation prevent a partial write from
+appearing complete. Semantic loading requires the corresponding reviewed
+question set so tampered or mismatched summaries and reports are rejected.
+
 ## 4. Architecture roles and MVP technologies
 
 The lifecycles above define the technology-independent architecture. The MVP

@@ -1105,3 +1105,53 @@ capacity. Repositories such as the measured `psf/black` and
 therefore intentionally unsupported by this first envelope. Changing the
 limits requires new measurements and a reviewed decision rather than an
 unrecorded configuration change.
+
+## D-029 — Select google/gson as the main evaluation corpus
+
+- **Status:** Accepted
+- **Date:** 2026-09-07
+
+### Context
+
+The deferred corpus selection was revisited after read-only preflight
+measurement of recognizable Java, Python, JavaScript/TypeScript, C#, Go, and
+Rust repositories. The initial limits in D-028 proved conservative: none of
+the stronger widely recognized candidates fit every current admission limit.
+The evaluation therefore needs a measured expansion experiment without
+silently redefining the supported MVP envelope or jumping directly to a
+flagship monorepository.
+
+[`google/gson`](https://github.com/google/gson) is widely recognizable, offers
+history across the supported source types, and contains explicit repository-native
+Markdown rationale, including a design document that records alternatives and
+trade-offs. Its measured workload is materially above the initial envelope but
+well below the largest stress candidates considered. It therefore exercises
+the scaling question while still supporting reviewable ground truth.
+
+### Decision
+
+Use `google/gson` as the main external evaluation corpus, pinned to the exact
+commit resolved for the first successful complete source build. Keep
+[`serilog/serilog`](https://github.com/serilog/serilog) as the fallback if the
+Gson build or subsequent ground-truth review proves impractical.
+
+Evaluate Gson in gated stages: first build and validate the complete normalized
+source snapshot with explicit experimental limits; then establish a reviewed
+question set; then run offline lexical retrieval, paid vector retrieval, and
+paid end-to-end answering as separately measured steps. Require a separate
+cost estimate, stop condition, and user approval before each paid stage.
+
+The experimental limits are run-specific safety ceilings, not new application
+defaults. Any permanent limit change requires the measured source count,
+request count, elapsed time, failure behaviour, and a separate reviewed
+decision.
+
+### Consequences
+
+The earlier shortlist has served its purpose and is no longer the active corpus
+selection. Gson may initially be rejected by the normal product preflight; the
+evaluation runner must pass explicit experimental limits without changing the
+shared defaults. No partial or truncated corpus is acceptable. Generated
+snapshots, indexes, detailed traces, and credentials remain private local
+artifacts; only the small reviewed inputs and aggregate results may become
+versioned project material.

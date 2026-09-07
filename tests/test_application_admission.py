@@ -39,18 +39,18 @@ def _metadata() -> GitHubRepositoryMetadata:
 
 
 def test_shared_defaults_hold_exactly_the_accepted_values() -> None:
-    """The accepted initial MVP envelope, defined once as shared
+    """The accepted measured MVP envelope, defined once as shared
     application policy and reused (never re-hard-coded) by preflight,
     snapshot building, and the rebuild CLI."""
     assert DEFAULT_ADMISSION_LIMITS == AdmissionLimits(
-        max_all_issues_and_pull_requests=700,
-        max_closed_pull_requests=500,
-        max_commits=1100,
-        max_tree_entries=100,
+        max_all_issues_and_pull_requests=3500,
+        max_closed_pull_requests=1500,
+        max_commits=2500,
+        max_tree_entries=500,
     )
     assert DEFAULT_RUNTIME_INGESTION_LIMITS == RuntimeIngestionLimits(
-        max_source_count=3000,
-        max_github_request_count=750,
+        max_source_count=15000,
+        max_github_request_count=2000,
     )
 
 

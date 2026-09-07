@@ -1,7 +1,8 @@
 """The bounded rationale-answering workflow.
 
-`search_history` is the answering model's only repository-history
-capability: this workflow drives at most three executed searches, requires
+The user's exact question is the deterministic first repository-history
+query. The answering model may request narrower refinements after seeing
+those results. This workflow drives at most three executed searches, requires
 an explicit `sufficient`/`insufficient` assessment after every search,
 validates citations deterministically against the evidence actually
 returned during this run, and returns exactly one structured `answered` or
@@ -43,7 +44,10 @@ from reporationale.domain.retrieval import RankedEvidence
 # UI setting (see the accepted bounded tool-calling decision).
 MAX_SEARCH_CALLS = 3
 
-AGENT_VERSION = "answering-workflow/1"
+# Bumped to /3 when the exact user question replaced the model-generated first
+# query. The total three-search budget and the two final outcome shapes remain
+# unchanged.
+AGENT_VERSION = "answering-workflow/3"
 
 Clock = Callable[[], float]
 
@@ -56,9 +60,9 @@ class AnsweringWorkflowError(Exception):
 
 class AnsweringProtocolError(AnsweringWorkflowError):
     """The answering model produced a malformed or contradictory action for
-    the current turn: a non-search first action, a search requested after
-    the fixed `MAX_SEARCH_CALLS` budget is exhausted, an unrecognized action
-    type, or a refinement missing its required `missing_information`."""
+    the current turn: a search requested after the fixed `MAX_SEARCH_CALLS`
+    budget is exhausted, an unrecognized action type, or a refinement missing
+    its required `missing_information`."""
 
 
 class UnknownCitationEvidenceError(AnsweringWorkflowError):
@@ -94,7 +98,13 @@ class AnsweringModel(Protocol):
     @property
     def model_id(self) -> str: ...
 
-    def start(self, *, question: str) -> ModelTurn: ...
+    def start(
+        self,
+        *,
+        question: str,
+        evidence: tuple[RankedEvidence, ...],
+        search_available: bool,
+    ) -> ModelTurn: ...
 
     def submit_evidence(
         self, *, evidence: tuple[RankedEvidence, ...], search_available: bool
@@ -163,8 +173,9 @@ def answer_question(
 ) -> AnsweringRunResult:
     """Answer one rationale question through the bounded agent loop.
 
-    Rejects a blank `question`. Requires the model's first action to
-    request a search, executes at most `MAX_SEARCH_CALLS` searches, and
+    Rejects a blank `question`. Executes the first search deterministically
+    with the user's exact question, then lets the model answer, abstain, or
+    request a narrower refinement. Executes at most `MAX_SEARCH_CALLS` searches, and
     requires an explicit sufficiency assessment after every one before
     either final outcome is reachable. Stops as soon as evidence is
     assessed sufficient; after the third search, `search_available=False`
@@ -191,15 +202,10 @@ def answer_question(
         total_output_tokens += response.output_tokens
         return response.action
 
-    action = _call_model(lambda: model.start(question=question))
-    if not isinstance(action, SearchRequested):
-        raise AnsweringProtocolError(
-            "the answering model's first action must request a search"
-        )
-
+    query = question
+    first_search = True
     outcome: AnswerOutcome | None = None
     while outcome is None:
-        query = action.query
         search_started_at = clock()
         evidence = search_history.search_history(query)
         retrieval_latency = clock() - search_started_at
@@ -209,11 +215,21 @@ def answer_question(
         evidence_ids = tuple(result.evidence_id for result in evidence)
 
         search_available = searches_executed < MAX_SEARCH_CALLS
-        next_action = _call_model(
-            lambda: model.submit_evidence(
-                evidence=evidence, search_available=search_available
+        if first_search:
+            next_action = _call_model(
+                lambda: model.start(
+                    question=question,
+                    evidence=evidence,
+                    search_available=search_available,
+                )
             )
-        )
+            first_search = False
+        else:
+            next_action = _call_model(
+                lambda: model.submit_evidence(
+                    evidence=evidence, search_available=search_available
+                )
+            )
 
         if isinstance(next_action, SearchRequested):
             if not search_available:
@@ -235,7 +251,7 @@ def answer_question(
                     next_query=next_action.query,
                 )
             )
-            action = next_action
+            query = next_action.query
             continue
 
         if isinstance(next_action, FinalAnswer):

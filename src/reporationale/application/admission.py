@@ -109,19 +109,16 @@ class AdmissionLimits(BaseModel):
     max_tree_entries: int = Field(strict=True, gt=0)
 
 
-# The accepted initial MVP admission envelope, measured from the largest
-# completed authenticated build (`pallets/markupsafe`: 522 combined issue/PR
-# roots, 367 closed pull requests, 844 commits, 60 tree entries), rounded
-# above that sample. This is the one canonical definition; preflight,
-# snapshot building, and the rebuild CLI all default to this same object
-# rather than each hard-coding these numbers separately. Changing these
-# values requires new measurements and a reviewed decision, not an
-# unrecorded configuration change.
+# The accepted MVP admission envelope, expanded after the complete Gson
+# evaluation build succeeded within these measured ceilings. This remains
+# the one canonical definition shared by preflight, snapshot building, and
+# the rebuild CLI; it is a tested local-MVP envelope, not a claim of
+# production-scale or unlimited-repository support.
 DEFAULT_ADMISSION_LIMITS = AdmissionLimits(
-    max_all_issues_and_pull_requests=700,
-    max_closed_pull_requests=500,
-    max_commits=1100,
-    max_tree_entries=100,
+    max_all_issues_and_pull_requests=3500,
+    max_closed_pull_requests=1500,
+    max_commits=2500,
+    max_tree_entries=500,
 )
 
 
@@ -307,17 +304,14 @@ class RuntimeIngestionLimits:
                 raise ValueError(f"{name} must be a strict positive integer")
 
 
-# The accepted initial MVP runtime envelope: a hard cap of 3,000 actual
-# normalized sources and 750 actual source-collection requests per build.
-# The request cap provides headroom over the measured 400-request sample and
-# covers up to 500 unavoidable per-pull-request review calls plus paginated
-# roots, commits, comments, and tree/blob requests — it is a per-build
-# collection budget, not a substitute for GitHub's own rate-limit
-# enforcement. This is the one canonical definition shared by preflight,
-# snapshot building, and the rebuild CLI.
+# The accepted MVP runtime envelope, expanded after Gson completed with
+# 13,893 normalized sources and 1,371 source-collection requests. The
+# rounded ceilings preserve measured headroom while remaining hard stops
+# before publication; the request cap is not a substitute for GitHub's own
+# rate-limit enforcement.
 DEFAULT_RUNTIME_INGESTION_LIMITS = RuntimeIngestionLimits(
-    max_source_count=3000,
-    max_github_request_count=750,
+    max_source_count=15000,
+    max_github_request_count=2000,
 )
 
 

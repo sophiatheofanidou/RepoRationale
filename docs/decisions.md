@@ -113,6 +113,10 @@ contracts.
 - **Date:** 2026-08-31
 - **Amended:** 2026-09-07
 
+The initial-query portion of this decision is superseded by D-030. The
+structured refinement, answer, abstention, search-budget, and validation
+contracts remain accepted.
+
 ### Context
 
 A fixed retrieve-once-and-answer pipeline would demonstrate basic RAG but would
@@ -184,7 +188,7 @@ required, closing the same gap the same way as the rest of this decision.
 
 ### Decision
 
-The MVP agent still has exactly two tools capable of querying repository
+At the time of this amendment, the MVP agent had exactly two tools capable of querying repository
 history, both performing the identical bounded vector retrieval across all
 chunks in the active snapshot with no source, author, date, state, or
 repository-item filter, unchanged from the original decision:
@@ -233,7 +237,7 @@ confirming the provider-isolation boundary established by D-007. "One
 query-only tool" in this decision's title and consequences now specifically
 means the agent's query-only capability over repository history, split
 across `search_history` and `refine_search` for the reason given above; the
-agent's total tool surface is four tools, none of which accept a repository,
+agent's total tool surface was four tools, none of which accepted a repository,
 source, author, date, state, item-ID, backend, filter, or result-count
 parameter, and none of which grant filesystem, shell, code-modification, or
 external access. This amendment was re-verified against the full 12-run
@@ -536,9 +540,9 @@ complexity.
 
 ### Context
 
-The generation model must interpret rationale questions, decide when to call
-`search_history`, refine a query when necessary, assess evidence sufficiency,
-and produce a cited answer or abstain. Different Claude model tiers may trade
+The generation model must interpret rationale questions, refine a query when
+necessary after the application-owned first search, assess evidence
+sufficiency, and produce a cited answer or abstain. Different Claude model tiers may trade
 off tool-use reliability, answer quality, latency, and cost, so the exact MVP
 model should not be fixed without project-specific evidence.
 
@@ -569,6 +573,15 @@ recorded in `evaluation.md`. This was one run per case across four
 development cases, with expected run-to-run stochasticity, not a
 statistically powered study.
 
+After the held-out run exposed one case where Opus's near-paraphrase displaced
+an expected source that the unchanged question retrieved at rank two, a bounded
+diagnostic tested an application-owned exact first query. Opus then produced a
+fully grounded answer from the expected design document in one search and one
+model call. Haiku retrieved and cited the same source cheaply, but added
+unsupported elaborations. Sonnet was rerun only on its two prior hard-failure
+cases; both again cited evidence IDs absent from their respective runs. These
+diagnostics reinforce the Opus selection rather than reopening it.
+
 ### Decision
 
 Use Anthropic's official Python SDK and keep the Claude model identifier
@@ -579,13 +592,11 @@ predeclared expected outcome and expected evidence on all four comparison
 cases. Isolate Anthropic request and response types behind the provider
 boundary established in D-007.
 
-Claude Haiku 4.5 is recorded as a strong, meaningfully cheaper alternative —
-it passed every hard requirement and matched three of the four predeclared
-cases at roughly a fifth of Opus's measured cost on this comparison — but it
-is not the selected model, because it did not match the predeclared decision
-evidence on the difficult-miss case. Claude Sonnet 5 is excluded from
-selection because it produced two hard citation/grounding failures on this
-run.
+Claude Haiku 4.5 remains a meaningfully cheaper alternative, but is not the
+selected model because it missed predeclared decision evidence in the original
+comparison and later added unsupported elaborations in the exact-query probe.
+Claude Sonnet 5 remains excluded because its two hard citation/grounding
+failures recurred with the exact first query.
 
 ### Consequences
 
@@ -1052,6 +1063,7 @@ manually create or activate a virtual environment for the documented workflow.
 
 - **Status:** Accepted
 - **Date:** 2026-09-06
+- **Amended:** 2026-09-07
 
 ### Context
 
@@ -1064,32 +1076,36 @@ and 400 source-collection requests. Separate four-, eight-, and sixteen-worker
 runs preserved the same corpus; eight workers provided the preferred balance
 between elapsed time and GitHub request-rate headroom.
 
+The later complete Gson evaluation build successfully collected 13,893
+normalized sources with 1,371 source-collection requests (1,406 including
+repository lookup) in about 290 seconds. Its chunk and vector artifacts also
+completed and reopened successfully. This demonstrated that the original
+limits were too conservative for the larger, long-lived repositories where
+the product is intended to be most useful.
+
 ### Decision
 
-Use these initial MVP limits:
+Use these measured MVP limits:
 
 | Limit | Value |
 | --- | ---: |
-| Combined issue and pull-request roots | 700 |
-| Closed pull requests | 500 |
-| Commits | 1,100 |
-| Git tree entries | 100 |
-| Actual normalized sources | 3,000 |
-| Actual source-collection requests | 750 |
+| Combined issue and pull-request roots | 3,500 |
+| Closed pull requests | 1,500 |
+| Commits | 2,500 |
+| Git tree entries | 500 |
+| Actual normalized sources | 15,000 |
+| Actual source-collection requests | 2,000 |
 
 Keep pull-request review-summary concurrency bounded at eight workers. Define
 the numeric defaults once as application policy and use the same defaults for
 preflight, snapshot building, and the rebuild command. Tests may inject smaller
 limits to exercise boundaries without changing product policy.
 
-The 750-request cap is a total source-collection budget, not a claim that total
-requests and GitHub's per-minute secondary rate limit are interchangeable. It
-provides headroom over the measured 400 requests and covers the structural cost
-of up to 500 unavoidable per-pull-request review calls plus paginated roots,
-commits, comments, and tree/blob requests. The eight-worker benchmark reached
-approximately 643 normalized collection requests per minute without a
-rate-limit response; sixteen workers improved the workflow by only another
-11.8% while increasing that measured rate to approximately 761.
+The 2,000-request cap is a total source-collection budget, not a claim that
+total requests and GitHub's per-minute secondary rate limit are
+interchangeable. It provides measured headroom over Gson's 1,371 collection
+requests. Concurrency remains fixed at eight rather than increasing with the
+larger total budget.
 
 ### Consequences
 
@@ -1099,12 +1115,12 @@ request after the permitted maximum before it is sent, and the actual source
 cap is checked before publication. No limit failure produces a partial or ready
 snapshot.
 
-These values define the supported initial MVP envelope, not general production
-capacity. Repositories such as the measured `psf/black` and
-`BurntSushi/ripgrep` preflight probes exceed the 700-root threshold and are
-therefore intentionally unsupported by this first envelope. Changing the
-limits requires new measurements and a reviewed decision rather than an
-unrecorded configuration change.
+These values define the supported local MVP envelope, not general production
+capacity. Gson is the largest repository whose complete supported corpus has
+been successfully exercised through the current workflow. Other repositories
+must still pass every admission and runtime dimension; exceeding any ceiling
+remains an explicit rejection rather than partial indexing. Further expansion
+requires new measurements and a reviewed decision.
 
 ## D-029 — Select google/gson as the main evaluation corpus
 
@@ -1141,17 +1157,65 @@ question set; then run offline lexical retrieval, paid vector retrieval, and
 paid end-to-end answering as separately measured steps. Require a separate
 cost estimate, stop condition, and user approval before each paid stage.
 
-The experimental limits are run-specific safety ceilings, not new application
-defaults. Any permanent limit change requires the measured source count,
-request count, elapsed time, failure behaviour, and a separate reviewed
-decision.
+The limits began as run-specific safety ceilings. After the complete Gson
+source, chunk, embedding, index-publication, and reopen path succeeded and its
+measurements were reviewed, the user accepted those rounded ceilings as the
+shared MVP defaults through the amendment to D-028. Further expansion still
+requires new measurements and a reviewed decision.
 
 ### Consequences
 
 The earlier shortlist has served its purpose and is no longer the active corpus
-selection. Gson may initially be rejected by the normal product preflight; the
-evaluation runner must pass explicit experimental limits without changing the
-shared defaults. No partial or truncated corpus is acceptable. Generated
-snapshots, indexes, detailed traces, and credentials remain private local
-artifacts; only the small reviewed inputs and aggregate results may become
-versioned project material.
+selection. Gson now fits the measured shared MVP envelope; repositories beyond
+it remain explicitly unsupported rather than partially indexed. No partial or
+truncated corpus is acceptable. Generated snapshots, indexes, detailed traces,
+and credentials remain private local artifacts; only the small reviewed inputs
+and aggregate results may become versioned project material.
+
+## D-030 — Use the exact user question for the first semantic search
+
+- **Status:** Accepted
+- **Date:** 2026-09-07
+
+### Context
+
+The original bounded-agent design forced Claude to formulate the first vector
+query before seeing evidence. Prompt guidance asked it to preserve distinctive
+wording, but the held-out Gson semantic case showed that a close paraphrase can
+still move an expected source out of the top five. The unchanged user question
+retrieved the intended design-document chunk at rank two; Opus's generated
+query did not, and two refinements moved further away from the collection and
+type-system rationale.
+
+A bounded post-evaluation diagnostic sent the unchanged question directly to
+the same Voyage/Chroma index before invoking Claude. Opus retrieved and cited
+the expected design document, covered the complete rationale, and required one
+search and one model call instead of three searches and four model calls. A
+Haiku probe retrieved the same source but added unsupported elaborations. Two
+Sonnet probes on its prior hard-failure cases again produced unauthorized
+citations. Detailed outputs remain private; aggregate results are recorded in
+`evaluation.md`.
+
+### Decision
+
+The application performs the mandatory first semantic search with the user's
+exact, non-blank question. Only after receiving those ranked results does the
+Claude agent run. It may provide a cited answer, report insufficient evidence,
+or request `refine_search(query, missing_information)`. The total budget remains
+three searches, so at most two model-generated refinements can follow the
+application-owned first search.
+
+Remove `search_history` from the model's tool surface. The underlying
+application search service remains the single vector-retrieval capability;
+BM25 remains an offline evaluation baseline and does not enter the product
+path. Keep `claude-opus-5` as the MVP answering model.
+
+### Consequences
+
+The model cannot alter the user's intent before the first retrieval and no
+longer consumes a provider call merely to restate the question. The workflow
+still guarantees retrieval before answering, preserves bounded agentic
+refinement, records a sufficiency assessment for every search, and validates
+citations against all evidence returned during the run. The diagnostic is
+evidence for this orchestration correction, not a replacement held-out run or
+a statistically powered model comparison.

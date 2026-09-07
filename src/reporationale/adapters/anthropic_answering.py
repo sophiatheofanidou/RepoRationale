@@ -9,21 +9,31 @@ only on `AnthropicAnsweringAdapter` (satisfying the application layer's
 `AnsweringModel` Protocol), the provider-neutral `ModelTurn`/`ProviderAction`
 domain shapes it returns, and `AnthropicAnswerError`.
 
-`search_history` and `refine_search` remain the model's only tools able to
-query the repository-history index — the former for the mandatory first
-search, the latter for every later one, so its schema can make the
-refinement's own stated reason a required field rather than a merely
-requested one. Neither exposes a repository, source, author, date, state,
-item-ID, backend, filter, or result-count parameter, and retrieval behavior
-is identical between them. The model's final answer and abstention are
+The application performs the first repository-history search with the user's
+exact question. `refine_search` is the model's only retrieval tool and is
+available only after it has seen evidence, so its schema can require the
+refinement's stated reason. It exposes no repository, source, author, date,
+state, item-ID, backend, filter, or result-count parameter. The model's final
+answer and abstention are
 also expressed as forced tool calls (`provide_answer`,
 `report_insufficient_evidence`) rather than free-form JSON text; see the
-accepted decision this amends for why. Every turn after the first is
-requested with a `tool_choice` that forces exactly one call from the tools
+accepted decision this amends for why. Every model turn is requested with a
+`tool_choice` that forces exactly one call from the tools
 currently offered, so this adapter never needs to parse or tolerate
 free-form response text at all. It still rejects a malformed, missing,
 multiple, unknown, or contradictory tool call with a clear
 `AnthropicAnswerError` rather than guessing what the provider meant.
+
+`_BASE_SYSTEM_PROMPT` also carries two development-pilot corrections
+(see `docs/evaluation.md`'s Gson development end-to-end answering pilot):
+a source's own hedged or speculative language must not be promoted into a
+stated fact or design intent; and a question whose
+premise the evidence does not document, or actively contradicts, must
+resolve to `report_insufficient_evidence` rather than `provide_answer`
+even when the model can explain what the evidence actually shows. The former
+first-query prompt mitigation was replaced by a deterministic application
+search after held-out diagnostics showed that a near-paraphrase could still
+discard useful wording.
 """
 
 import json
@@ -42,38 +52,6 @@ from reporationale.domain.answering import (
     SearchRequested,
 )
 from reporationale.domain.retrieval import RankedEvidence
-
-# The exact, project-owned tool contract exposed to the answering model.
-# No repository, source, author, date, state, item-ID, backend, filter, or
-# result-count parameter is permitted here. `search_history` performs the
-# mandatory first search; a later, refining search instead calls
-# `refine_search` below, whose schema makes `missing_information` required
-# rather than optional. The two were split, rather than kept as one tool
-# with an optional field, because an optional field the model is merely
-# asked (not required) to fill in was not populated reliably in practice —
-# see the accepted decision this amends. Retrieval behavior is identical
-# either way: both call the same bounded search over every chunk in the
-# active snapshot.
-_SEARCH_HISTORY_TOOL: dict[str, object] = {
-    "name": "search_history",
-    "strict": True,
-    "description": (
-        "Search the active repository-history index for evidence relevant "
-        "to the user's rationale question. Use this only for the very "
-        "first search of the run; use refine_search for every later one."
-    ),
-    "input_schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "A focused natural-language search query.",
-            }
-        },
-        "required": ["query"],
-    },
-}
 
 _REFINE_SEARCH_TOOL: dict[str, object] = {
     "name": "refine_search",
@@ -158,7 +136,29 @@ _BASE_SYSTEM_PROMPT = (
     "You help recover documented rationale from a repository's indexed "
     "history; never answer from general knowledge instead of retrieved "
     "evidence.\n\n"
-    "Your first action must be search_history.\n\n"
+    "The application has already searched the repository-history index with "
+    "the user's exact question and supplied those results. Assess that evidence "
+    "before deciding whether to answer, report insufficient evidence, or request "
+    "a narrower refinement.\n\n"
+    "Preserve the evidence's own certainty. If a source uses a hedge such "
+    'as "maybe", "might", "could", or "probably", or phrases '
+    "something as a question, keep that same uncertainty in your answer "
+    "instead of stating it as settled fact. A source author's own "
+    "hypothesis or guess must never be presented as a documented "
+    "historical fact or design intent. Distinguish clearly between what "
+    "the history explicitly documents as fact, what a source author only "
+    "speculated, and anything you are synthesizing yourself. Citing a "
+    "source is not enough on its own: the claim you make must carry the "
+    "same epistemic strength the source itself expresses, not more.\n\n"
+    "If the question assumes that a specific change happened or that a "
+    "specific rationale existed, but the retrieved evidence does not "
+    "document that premise, or shows the opposite, call "
+    "report_insufficient_evidence rather than provide_answer, even if you "
+    "can explain what the evidence actually shows. Your explanation may "
+    "say that the evidence contradicts the question's premise or does not "
+    "confirm it; this is still an insufficient-evidence outcome, not an "
+    "answered rationale question, because the premise itself is what was "
+    "asked about.\n\n"
     "Cite evidence only by the evidence_id values you were given; never "
     "invent one.\n\n"
     "The answer's [n] markers must correspond exactly and only to the "
@@ -170,8 +170,8 @@ _BASE_SYSTEM_PROMPT = (
     "report_insufficient_evidence instead."
 )
 
-# Appended to the base prompt on every turn after the first, so the
-# model's actual, current ability to search again is stated explicitly
+# Appended to the base prompt on every model turn, so the model's actual,
+# current ability to search again is stated explicitly
 # rather than left for it to infer from the absence of a tool. Haiku,
 # Sonnet, and Opus have all been observed live calling `refine_search`
 # after the search budget was exhausted and it was no longer offered;
@@ -194,14 +194,12 @@ _SEARCH_EXHAUSTED_GUIDANCE = (
 )
 
 
-def _system_prompt_for(*, expect_first_action: bool, search_available: bool) -> str:
+def _system_prompt_for(*, search_available: bool) -> str:
     """The system prompt for one turn: the fixed base instructions, plus —
     on every turn after the mandatory first search — an explicit statement
     of whether `refine_search` is actually still available this turn.
     Never states the exhausted-budget guidance when a search is still
     available, and never omits it once the budget is spent."""
-    if expect_first_action:
-        return _BASE_SYSTEM_PROMPT
     guidance = (
         _SEARCH_AVAILABLE_GUIDANCE if search_available else _SEARCH_EXHAUSTED_GUIDANCE
     )
@@ -218,17 +216,12 @@ _MAX_TOKENS = 2048
 _THINKING_CONFIG: dict[str, object] = {"type": "disabled"}
 
 
-def _tools_for(
-    *, expect_first_action: bool, search_available: bool
-) -> list[dict[str, object]]:
-    """The tools offered for one turn. The first turn offers only
-    `search_history`, matching the forced `tool_choice` below. A later
-    turn offers `provide_answer` and `report_insufficient_evidence`, plus
-    `refine_search` (not `search_history` again) while the search budget is
-    not yet exhausted; it never offers zero tools, so `tool_choice` never
-    needs to be omitted."""
-    if expect_first_action:
-        return [_SEARCH_HISTORY_TOOL]
+def _tools_for(*, search_available: bool) -> list[dict[str, object]]:
+    """Offer both terminal actions and, while budget remains, refinement.
+
+    The application has already executed the exact-question first search,
+    so the model never receives a separate first-search tool.
+    """
     if search_available:
         return [
             _REFINE_SEARCH_TOOL,
@@ -238,19 +231,10 @@ def _tools_for(
     return [_PROVIDE_ANSWER_TOOL, _REPORT_INSUFFICIENT_EVIDENCE_TOOL]
 
 
-def _tool_choice_for(*, expect_first_action: bool) -> dict[str, object]:
+def _tool_choice_for() -> dict[str, object]:
     """The explicit `tool_choice` for one request, so the API itself
     guarantees exactly one call from the tools offered — never a parallel
-    second call, and never any accompanying free text. The first turn
-    additionally forces the specific `search_history` tool; every later
-    turn allows the model to pick freely among whichever tools
-    `_tools_for` offered."""
-    if expect_first_action:
-        return {
-            "type": "tool",
-            "name": _SEARCH_HISTORY_TOOL["name"],
-            "disable_parallel_tool_use": True,
-        }
+    second call, and never any accompanying free text."""
     return {"type": "any", "disable_parallel_tool_use": True}
 
 
@@ -362,11 +346,6 @@ def _require_query(raw_input: object, *, tool_name: str) -> str:
     return query
 
 
-def _parse_search_history(raw_input: object) -> SearchRequested:
-    query = _require_query(raw_input, tool_name="search_history")
-    return SearchRequested(query=query, missing_information=None)
-
-
 def _parse_refine_search(raw_input: object) -> SearchRequested:
     query = _require_query(raw_input, tool_name="refine_search")
     missing_information = cast(dict[str, object], raw_input).get("missing_information")
@@ -437,8 +416,6 @@ def _parse_action(
         raise AnthropicAnswerError(
             f"the model called tool {tool_use.name!r}, which was not offered this turn"
         )
-    if tool_use.name == _SEARCH_HISTORY_TOOL["name"]:
-        return _parse_search_history(tool_use.input), tool_use.id
     if tool_use.name == _REFINE_SEARCH_TOOL["name"]:
         return _parse_refine_search(tool_use.input), tool_use.id
     if tool_use.name == _PROVIDE_ANSWER_TOOL["name"]:
@@ -487,16 +464,31 @@ class AnthropicAnsweringAdapter:
     def model_id(self) -> str:
         return self._model_id
 
-    def start(self, *, question: str) -> ModelTurn:
-        self._messages = [{"role": "user", "content": question}]
-        return self._request(expect_first_action=True, search_available=True)
+    def start(
+        self,
+        *,
+        question: str,
+        evidence: tuple[RankedEvidence, ...],
+        search_available: bool,
+    ) -> ModelTurn:
+        self._messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"Question:\n{question}\n\n"
+                    "Initial search results (JSON):\n"
+                    + json.dumps([_evidence_context(result) for result in evidence])
+                ),
+            }
+        ]
+        return self._request(search_available=search_available)
 
     def submit_evidence(
         self, *, evidence: tuple[RankedEvidence, ...], search_available: bool
     ) -> ModelTurn:
         if self._pending_tool_use_id is None:
             raise AnthropicAnswerError(
-                "submit_evidence called with no pending search_history call "
+                "submit_evidence called with no pending refine_search call "
                 "to respond to"
             )
         self._messages.append(
@@ -513,25 +505,16 @@ class AnthropicAnsweringAdapter:
                 ],
             }
         )
-        return self._request(
-            expect_first_action=False, search_available=search_available
-        )
+        return self._request(search_available=search_available)
 
-    def _request(
-        self, *, expect_first_action: bool, search_available: bool
-    ) -> ModelTurn:
-        tools = _tools_for(
-            expect_first_action=expect_first_action, search_available=search_available
-        )
+    def _request(self, *, search_available: bool) -> ModelTurn:
+        tools = _tools_for(search_available=search_available)
         response = self._client.messages.create(
             model=self._model_id,
             max_tokens=_MAX_TOKENS,
-            system=_system_prompt_for(
-                expect_first_action=expect_first_action,
-                search_available=search_available,
-            ),
+            system=_system_prompt_for(search_available=search_available),
             tools=tools,
-            tool_choice=_tool_choice_for(expect_first_action=expect_first_action),
+            tool_choice=_tool_choice_for(),
             thinking=_THINKING_CONFIG,
             messages=self._messages,
         )

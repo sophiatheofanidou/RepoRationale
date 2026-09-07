@@ -198,25 +198,28 @@ Once a snapshot is ready, each question follows this workflow:
 ```mermaid
 flowchart LR
     Question[User question]
-    Question --> Agent[Answering agent]
-    Agent --> Search[search_history tool]
+    Question --> Search[Exact-question semantic search]
     Search --> Index[Search vector index]
     Index --> Evidence[Return ranked evidence]
-    Evidence --> Assess{Evidence sufficient?}
-    Assess -->|No, attempts remain| Agent
+    Evidence --> Agent[Answering agent]
+    Agent --> Assess{Evidence sufficient?}
+    Assess -->|No, attempts remain| Refine[refine_search tool]
+    Refine --> Index
     Assess -->|Yes| Validate[Validate citations]
     Validate --> Answer[Cited answer]
     Assess -->|No, final attempt| Abstain[Insufficient evidence]
 ```
 
 - **User question:** the natural-language rationale question entered in the UI.
-- **Answering agent:** decides what to search and evaluates whether the returned
-  evidence answers the actual question. It never explores the repository
-  directly.
-- **`search_history` tool:** the agent's only tool able to query repository
-  history. It accepts a text query and requests a bounded search over every
-  chunk in the active snapshot. It exposes no source, author, date, state, or
-  repository-item filters.
+- **Exact-question semantic search:** the application sends the user's unchanged
+  question through Voyage and the active Chroma index before invoking the
+  answering model.
+- **Answering agent:** evaluates whether the returned evidence answers the actual
+  question. It never explores the repository directly and formulates a new query
+  only when the first results leave a specific information gap.
+- **`refine_search` tool:** the agent's only tool able to request another search.
+  It accepts a text query and a required missing-information explanation, and
+  exposes no source, author, date, state, or repository-item filters.
 - **Search vector index:** performs semantic similarity search for the current
   query.
 - **Return ranked evidence:** supplies the most relevant chunks with source
@@ -238,24 +241,22 @@ The agent continues or stops according to whether the retrieved text supports
 the requested rationale.
 
 The application owns a provider-independent answering contract and a plain
-Python workflow with a fixed limit of three searches. The answering provider
-returns only one typed action at a time: request a search, provide a final
-answer with selected evidence IDs, or report insufficient evidence. The first
-action must be a search, every completed search receives an explicit
+Python workflow with a fixed limit of three searches. It performs the first
+search itself, then the answering provider returns only one typed action at a
+time: request a refinement, provide a final answer with selected evidence IDs,
+or report insufficient evidence. Every completed search receives an explicit
 sufficiency assessment, and a fourth search request is rejected without being
 executed.
 
 The Anthropic adapter owns the Claude message history and translates the
 standard tool-use and tool-result exchange into those application actions. It
 accepts a maintainer-supplied model identifier and exposes a fixed set of
-four tools: two query-only schemas covering the same bounded search,
-`search_history` for the mandatory first call and `refine_search` for every
-later one (whose own stated reason for refining is consequently a required
-field rather than an optional one), and two non-retrieval tools,
+three tools: `refine_search` for an optional later query, with a required
+missing-information explanation, and two non-retrieval tools,
 `provide_answer` and `report_insufficient_evidence`, through which the model
 must express its final answer or abstention as a schema-validated tool call
-rather than free-form text. Every turn after the first forces the model to
-call exactly one of the tools currently offered; extended thinking is
+rather than free-form text. Every model turn forces exactly one of the tools
+currently offered; extended thinking is
 explicitly disabled so no supported model substitutes a `thinking` block for
 that required call. Provider response objects and citation metadata never
 cross the adapter boundary.
@@ -313,7 +314,7 @@ model, selected through a bounded development comparison:
 | Repository source adapter | [GitHub REST API](https://docs.github.com/en/rest) | Collects the complete supported GitHub corpus through explicit pagination and normalizes it | Expose raw GitHub responses to the core, use GraphQL, or support another platform in the MVP |
 | Embedding provider | [Voyage 4](https://docs.voyageai.com/docs/embeddings) | Creates embeddings for indexed chunks and incoming search queries | Search the index, assess evidence, or generate answers |
 | Vector storage and retrieval | [Chroma](https://docs.trychroma.com/) | Persists chunk vectors and returns ranked evidence for a query | Create embeddings, reason about evidence, or generate answers |
-| Answering-model provider | [Anthropic Claude](https://platform.claude.com/docs/en/models/overview) through the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python); MVP model is `claude-opus-5`, selected by a bounded development comparison | Chooses queries, calls `search_history`, assesses evidence sufficiency, and generates the cited answer | Access repository or storage systems directly, or cite evidence that retrieval did not return |
+| Answering-model provider | [Anthropic Claude](https://platform.claude.com/docs/en/models/overview) through the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python); MVP model is `claude-opus-5`, selected by a bounded development comparison | Assesses evidence sufficiency, optionally requests `refine_search`, and generates the cited answer | Rewrite the initial user query, access repository or storage systems directly, or cite evidence that retrieval did not return |
 | Snapshot persistence | Local manifest and [JSON Lines](https://jsonlines.org/) source/chunk files, plus the Chroma index | Makes completed repository indexes reusable and rebuildable while keeping generated data local | Treat incomplete data as ready or store user credentials in the snapshot |
 | Offline retrieval baseline | [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) over the same chunks | Compares lexical retrieval with the product's semantic retrieval during evaluation | Participate in `search_history`, prefilter vector results, or create a second product retrieval path |
 

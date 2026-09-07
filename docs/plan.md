@@ -1,7 +1,7 @@
 # RepoRationale — Implementation Plan and Current State
 
 **Project state:** Implementation  
-**Current milestone:** M5 — Evaluation
+**Current milestone:** M6 — Demonstration and public documentation
 **Last updated:** 2026-09-07
 
 This document is the source of truth for current progress, the active
@@ -10,42 +10,37 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Correct answering behaviour exposed by the Gson development pilot
-**Task status:** Changes requested
-**Last completed work:** The split-safe Gson development answering run completed
-all four cases exactly once with `claude-opus-5`, 13 Anthropic calls, 38,219
-input tokens, 3,233 output tokens, and `$0.271920` estimated Anthropic cost.
-Nine Voyage query embeddings used 109 tokens for `$0.00000654`; no document
-embedding, GitHub call, retry, or held-out provider call occurred. The binary
-outcome score was 2/4. One case was a clean expected-evidence retrieval miss,
-one was a fully supported success, one contained a real claim-support defect
-despite valid citation provenance, and one gave a supported false-premise
-correction under the wrong predeclared binary outcome.
-**Verification performed:** Claude reported 683 passing tracked tests, 16
-passing private runner tests, clean Ruff and strict mypy, then published and
-reloaded the seven-file run. Codex reviewed all four raw traces against the
-version-1 ground truth and original normalized evidence, independently reloaded
-the run, and confirmed four development answers, 2/4 computed outcome accuracy,
-the recorded token/cost totals, nine query requests, and zero held-out results.
-**Known limitations or deviations:** The successful ingestion required
-run-specific limits above the product defaults; no permanent limit change has
-been accepted. Blank commit messages are valid Git data and are now excluded as
-non-rationale content, but the completed snapshot cannot reconstruct the exact
-count or identities skipped. The corrected indexing report discloses this
-measurement gap separately rather than claiming zero known limitations.
-**Open questions or blockers:** Held-out execution remains blocked until the
-development findings are addressed. The accepted binary product contract has
-no separate false-premise outcome, so prompt guidance must map an unsupported
-or contradicted rationale premise to `insufficient_evidence`. The mandatory
-first query should preserve the user's distinguishing wording, and answers must
-not promote tentative source language into fact. Numeric held-out targets must
-then be fixed before any held-out call. The successful ingestion still used
-run-specific limits above the product defaults; no permanent limit change has
-been accepted.
-**Next action:** Have Claude implement and test the three bounded prompt-level
-corrections without changing the four-tool, three-search, two-outcome contract.
-Codex reviews that diff before a separately approved second development-only
-run; do not query held-out cases.
+**Active task:** Build the minimal Streamlit demonstration and final public documentation
+**Task status:** Ready
+**Last completed work:** M5 remains closed with the frozen eight-case Gson
+held-out result. A bounded post-evaluation diagnostic then traced its one
+semantic-source limitation to the model-generated first query. D-030 now makes
+the unchanged user question the mandatory first Voyage/Chroma search and leaves
+Claude up to two evidence-informed refinements. Opus recovered and cited the
+expected design document in one search and one model call; Haiku added
+unsupported elaborations, and Sonnet repeated its two prior unauthorized-citation
+failures, so Opus remains selected. The implementation is versioned as
+`answering-workflow/3`.
+**Verification performed:** The frozen held-out artifact and its prior full
+verification remain valid. Four targeted first-query probes were reviewed;
+the final workflow and Anthropic adapter contract have focused offline coverage.
+The complete tracked suite passes with 680 tests, clean Ruff, all eight changed
+Python files formatted, strict mypy across 44 source files, and
+`git diff --check`.
+**Known limitations or deviations:** Blank commit messages are valid Git data
+and are excluded as non-rationale content, but the completed snapshot cannot
+reconstruct the exact count or identities skipped. The indexing report
+discloses this measurement gap separately rather than claiming zero known
+limitations. The larger limits are supported by one complete Gson measurement,
+not a production-capacity study.
+**Open questions or blockers:** No evaluation blocker remains. The frozen
+held-out run still reports its original limitation rather than rewriting the
+result after diagnosis. The expanded repository limits are supported by one
+complete Gson measurement rather than a production-capacity study.
+**Next action:** Implement the complete minimal Streamlit demo as one bounded
+milestone task: repository selection and preflight, ready-index reuse or
+explicit indexing confirmation with progress, question answering with citations
+and abstention, then concise setup/demo documentation and final verification.
 
 The project now has tested, repeatable ingestion, retrieval, and bounded
 agentic-answering foundations, including a completed and recorded Claude
@@ -67,22 +62,18 @@ embedding model (D-016). Repository onboarding is bounded and self-service
 corpus (D-019), local snapshots are persisted and reused (D-020), and
 embeddings are created per source-aware chunk (D-021). Users supply their own
 external-service credentials (D-022). The earlier evaluation-corpus deferral
-(D-017) was resolved in M5 by selecting Gson (D-029).
+(D-017) was resolved in M5 by selecting Gson (D-029). The exact user question
+now drives the first semantic search before Opus is invoked (D-030).
 
 ## 2. Immediate next steps
 
-1. Implement and test development-only prompt guidance that preserves the
-   original question's distinguishing terms in the first query, preserves
-   source uncertainty, and treats an unsupported premise as
-   `insufficient_evidence`.
-2. After Codex review and separate cost approval, rerun the four development
-   cases once under a new agent/prompt version and compare against the recorded
-   first run without replacing it.
-3. Freeze numeric held-out targets and the corrected protocol from development
-   evidence.
-4. Request separate approval before the first held-out retrieval or answering
-   call, then run the eight held-out cases exactly once without tuning against
-   their results.
+1. Implement the minimal Streamlit product path without adding another backend,
+   CLI, provider, or deployment target.
+2. Use the existing application workflows for preflight, indexing, snapshot
+   reuse, retrieval, answering, citations, and abstention; add only the tests
+   needed for the user-facing composition.
+3. Condense the public README and evaluation presentation around the final
+   measured results, run the final verification once, and close the MVP.
 
 ## 3. Milestones
 
@@ -203,7 +194,8 @@ Exit criteria:
 
 Deliverables:
 
-- `search_history` exposed as the agent's only tool;
+- an application-owned exact-question first search and `refine_search` as the
+  agent's only retrieval tool;
 - configured maximum number of tool calls;
 - support for query refinement across bounded repeated calls;
 - bounded Claude-model comparison and recorded selection;
@@ -220,9 +212,9 @@ Exit criteria:
 - citations refer only to evidence returned during the current run;
 - unanswerable seed questions produce the expected abstention behaviour.
 
-Exit-criteria verification: the first turn is always forced to
-`search_history`, so the agent cannot answer without at least one retrieval
-(D-004). The recoverable-miss case in the final comparison shows a useful
+Exit-criteria verification: the application always completes the exact user
+question search before invoking the model, so the agent cannot answer without
+retrieval (D-030). The recoverable-miss case in the final comparison shows a useful
 second retrieval recovering evidence a first search missed, for all three
 compared models. Citation validation deterministically rejects evidence not
 returned during the run, demonstrated in the final comparison by the two
@@ -234,6 +226,8 @@ result and `decisions.md` (D-004, D-015) for the tool-contract fix and model
 selection.
 
 ### M5 — Evaluation
+
+**Status:** Complete
 
 **Goal:** Measure the system rather than relying on a polished demonstration.
 
@@ -256,6 +250,8 @@ Exit criteria:
 - claims in the README are supported by recorded evaluation results.
 
 ### M6 — Demonstration and public documentation
+
+**Status:** Ready
 
 **Goal:** Make the completed system understandable and runnable without
 expanding its scope.

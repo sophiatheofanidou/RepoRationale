@@ -50,11 +50,10 @@ A suitable repository must:
 
 Gson is recognizable, has a varied supported history, and contains explicit
 repository-native Markdown rationale, including `GsonDesignDocument.md`. Its
-measured workload exceeds the conservative initial admission envelope, so its
-first complete source build is an evaluation experiment with explicit
-run-specific ceilings rather than evidence that the product defaults already
-support it. `serilog/serilog` is the fallback if complete ingestion or
-ground-truth review makes Gson impractical.
+measured workload exceeded the original conservative admission envelope. After
+the complete evaluation build succeeded, those experimental ceilings were
+accepted as the shared measured MVP limits. `serilog/serilog` remains the
+documented fallback corpus.
 
 The other repositories retain only these supporting roles:
 
@@ -504,20 +503,91 @@ Qualitative review found three different failure modes:
   and exposes ambiguity that must be resolved in the binary-answer guidance
   before held-out controls are run.
 
-This development run therefore validates the operational path but does not
-justify proceeding directly to held-out evaluation. The next development
-correction is prompt-level: preserve the user's distinguishing wording in the
+This development run validated the operational path and identified three
+prompt-level corrections: preserve the user's distinguishing wording in the
 mandatory first query, retain uncertainty qualifiers from evidence, and use
 the existing `insufficient_evidence` outcome when the rationale premise itself
-is unsupported or contradicted. These changes preserve the accepted four-tool,
-three-search, two-outcome architecture and must be tested before any new paid
-run.
+is unsupported or contradicted. The corrections preserved the accepted
+four-tool, three-search, two-outcome architecture and were frozen before the
+one-shot held-out run below, without another development-tuning loop.
+
+### Final Gson held-out result
+
+After the three prompt corrections were frozen as `answering-workflow/2`, the
+eight held-out cases were executed exactly once with no retry or further
+tuning. Before execution, the portfolio targets were fixed at vector Hit@5 of
+at least 4/6 answerable cases, outcome accuracy of at least 6/8, no malformed
+or unauthorized citation, mean answer latency no greater than 30 seconds, and
+total Anthropic cost no greater than `$0.75`.
+
+| Measure | Held-out result |
+| --- | ---: |
+| BM25 Hit@5 / MRR@5 | 4/6 / 0.444 |
+| Voyage/Chroma Hit@5 / MRR@5 | 6/6 / 0.833 |
+| Correct binary outcome | 8/8 |
+| Answers citing at least one predeclared expected source | 5/6 |
+| Malformed or unauthorized citations | 0 |
+| Claim-support review adequate | 8/8 |
+| Citation-completeness review adequate | 8/8 |
+| Total searches across answering runs | 16 |
+| Mean end-to-end answer latency | 15.14 s |
+| Anthropic input/output tokens | 74,871 / 5,930 |
+| Estimated Anthropic cost | `$0.522605` |
+| Voyage query requests/tokens | 22 / 317 |
+| Estimated Voyage query cost | `$0.00001902` |
+
+Voyage met the top-five retrieval target on all six answerable cases and was
+stronger than BM25 on this held-out set. All eight runs selected the expected
+binary outcome, including both unsupported-premise controls, and every
+generated claim was judged supported by its cited evidence. The uncertainty
+and false-premise prompt corrections behaved as intended in the cases that
+exercised them.
+
+One answerable semantic case remains an important limitation. Direct Voyage
+retrieval returned its predeclared design-document source, but the agent's own
+search sequence did not; the final answer used alternative retrieved history
+that supported its concrete claims but did not cover the complete
+predeclared collection/type-system rationale. This was not retried or tuned
+away. A second answer made one unnecessary refinement after its first search
+had already retrieved independently sufficient evidence, although that extra
+search added useful status and uncertainty context.
+
+All frozen portfolio targets were met. The result is a small eight-case
+held-out evaluation, not a statistically powered benchmark, but together with
+the recorded ingestion, persistence, retrieval, model-selection, cost, and
+failure measurements it is sufficient to close the MVP evaluation milestone.
+
+### Post-evaluation first-query diagnostic
+
+The held-out result above remains the frozen final evaluation. A subsequent
+bounded diagnostic investigated its one semantic-source limitation rather than
+rerunning or retuning the held-out set. The unchanged held-out question had
+already retrieved the expected Gson design-document chunk at rank two in direct
+Voyage retrieval; the Opus-generated near-paraphrase did not return it in the
+agent run. The diagnostic therefore used the exact user question for the first
+semantic search and invoked Claude only after those results existed.
+
+| Probe | Result | Searches / model calls | Wall-clock | Anthropic cost |
+| --- | --- | ---: | ---: | ---: |
+| Gson semantic case, Opus 5 | Complete grounded answer citing the expected design document | 1 / 1 | 9.16 s | `$0.030545` |
+| Same Gson case, Haiku 4.5 | Expected source cited, but answer added unsupported elaborations | 1 / 1 | 8.58 s | `$0.004578` |
+| Prior ItsDangerous direct failure, Sonnet 5 | Hard failure: cited an evidence ID absent from the run | 1 / 1 | 9.26 s | `$0.021702` |
+| Prior MarkupSafe difficult failure, Sonnet 5 | Hard failure: cited an evidence ID absent from the run | 1 / 1 | 10.03 s | `$0.019173` |
+
+The Opus result reduced the affected Gson case from three searches, four model
+calls, 25.22 seconds, and `$0.099770` while recovering the complete intended
+rationale. Haiku's low price did not compensate for its claim-support issue,
+and Sonnet reproduced both prior hard grounding failures. The product workflow
+therefore adopts the exact first semantic query and retains Opus. These four
+targeted probes cost `$0.075998` in total; they support an orchestration
+correction and model-retention decision, not new aggregate quality claims.
 
 ### Hard agent requirements
 
 These are pass/fail checks on every run:
 
-- the agent makes no more than three `search_history` calls;
+- the workflow makes no more than three semantic searches: one exact initial
+  query and at most two agent-requested refinements;
 - every retrieval call has a recorded `sufficient` or `insufficient`
   assessment; and
 - the final `answered` or `insufficient_evidence` outcome uses the defined
@@ -645,12 +715,11 @@ limits. The requests/minute values are throughput extrapolations from phase wall
 time, not individual request latencies. No measured run received a rate-limit
 response. See [GitHub REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
 
-The resulting initial MVP envelope is 700 combined issue/pull-request roots,
-500 closed pull requests, 1,100 commits, and 100 tree entries at admission,
-followed by runtime caps of 3,000 normalized sources and 750 collection
-requests. The runtime caps cover volume that cannot be estimated cheaply, such
-as comments and reviews; the request cap is a total per-build budget rather
-than a substitute for rate-limit handling.
+The original conservative MVP envelope was 700 combined issue/pull-request
+roots, 500 closed pull requests, 1,100 commits, and 100 tree entries at
+admission, followed by runtime caps of 3,000 normalized sources and 750
+collection requests. It was intentionally based on the smaller development
+builds and is retained here as historical measurement context.
 
 The selected Gson experiment used explicit run-specific ceilings of 3,500
 combined issue/pull-request roots, 1,500 closed pull requests, 2,500 commits,
@@ -668,15 +737,20 @@ non-rationale content, consistently with other empty discussion bodies. The
 successful snapshot is complete for normalized non-blank sources, but its local
 artifacts cannot reconstruct the exact number or identities of blank-message
 commits skipped. The final indexing report must disclose that measurement gap;
-it must not claim that no items were skipped. These measurements justify the
-evaluation run but do not by themselves change the product's default limits.
+it must not claim that no items were skipped. After the complete source, chunk,
+embedding, index-publication, and reopen path succeeded, the accepted product
+defaults were expanded to the same rounded ceilings used for the experiment:
+3,500 combined roots, 1,500 closed pull requests, 2,500 commits, 500 tree
+entries, 15,000 normalized sources, and 2,000 collection requests. This is a
+measured local-MVP envelope, not a production-scale claim.
 
 Repeated builds and immediate reuse preserved stable unique identities and the
 same corpus digest; failed or malformed collection never published a completed
 snapshot. The two completed samples do not establish general production
-capacity. Larger probes (`BurntSushi/ripgrep` at 2,967 roots and `psf/black` at
-5,238) exceed the initial 700-root envelope and are intentionally unsupported
-until new measurements justify changing it.
+capacity. Earlier probes found `BurntSushi/ripgrep` at 2,967 roots and
+`psf/black` at 5,238; the expanded root limit no longer rejects the former on
+that dimension alone, while the latter still exceeds it. Every other admission
+and runtime dimension remains independently binding.
 
 ### Question-answering measurements
 

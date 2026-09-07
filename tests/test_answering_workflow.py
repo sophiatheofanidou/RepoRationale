@@ -93,8 +93,16 @@ class _FakeModel:
 
     def __init__(self, turns: list[ModelTurn]) -> None:
         self._turns: Iterator[ModelTurn] = iter(turns)
+        self.initial_evidence: tuple[RankedEvidence, ...] | None = None
 
-    def start(self, *, question: str) -> ModelTurn:
+    def start(
+        self,
+        *,
+        question: str,
+        evidence: tuple[RankedEvidence, ...],
+        search_available: bool,
+    ) -> ModelTurn:
+        self.initial_evidence = evidence
         return next(self._turns)
 
     def submit_evidence(
@@ -118,7 +126,7 @@ def test_answerable_happy_path_returns_grounded_citations_and_completed_trace() 
     evidence_id = "github:octo-org/example-repo:markdown:polling.md:chunk:0"
     search = _FakeSearchHistory(
         {
-            "why was polling chosen?": (
+            "Why was polling chosen?": (
                 _evidence(
                     evidence_id,
                     text="Polling was chosen because webhooks were unreliable.",
@@ -129,11 +137,6 @@ def test_answerable_happy_path_returns_grounded_citations_and_completed_trace() 
     )
     model = _FakeModel(
         [
-            ModelTurn(
-                action=SearchRequested(query="why was polling chosen?"),
-                input_tokens=10,
-                output_tokens=5,
-            ),
             ModelTurn(
                 action=FinalAnswer(
                     answer="Polling was chosen because webhooks were unreliable. [1]",
@@ -169,11 +172,13 @@ def test_answerable_happy_path_returns_grounded_citations_and_completed_trace() 
     assert trace.searches[0].assessment == "sufficient"
     assert trace.searches[0].evidence_ids == (evidence_id,)
     assert trace.searches[0].missing_information is None
-    assert len(trace.model_call_latencies_seconds) == 2
-    assert trace.input_tokens == 30
-    assert trace.output_tokens == 20
+    assert len(trace.model_call_latencies_seconds) == 1
+    assert trace.input_tokens == 20
+    assert trace.output_tokens == 15
     assert trace.total_latency_seconds > 0
-    assert search.calls == ["why was polling chosen?"]
+    assert search.calls == ["Why was polling chosen?"]
+    assert model.initial_evidence is not None
+    assert model.initial_evidence[0].evidence_id == evidence_id
 
 
 def test_refinement_recovers_evidence_absent_from_first_search() -> None:
@@ -181,7 +186,7 @@ def test_refinement_recovers_evidence_absent_from_first_search() -> None:
     second_id = "github:octo-org/example-repo:markdown:specific.md:chunk:0"
     search = _FakeSearchHistory(
         {
-            "why polling?": (
+            "Why polling?": (
                 _evidence(first_id, text="Polling exists in the sync layer."),
             ),
             "why polling instead of webhooks?": (
@@ -194,11 +199,6 @@ def test_refinement_recovers_evidence_absent_from_first_search() -> None:
     )
     model = _FakeModel(
         [
-            ModelTurn(
-                action=SearchRequested(query="why polling?"),
-                input_tokens=1,
-                output_tokens=1,
-            ),
             ModelTurn(
                 action=SearchRequested(
                     query="why polling instead of webhooks?",
@@ -243,25 +243,20 @@ def test_refinement_recovers_evidence_absent_from_first_search() -> None:
     assert first_record.next_query == "why polling instead of webhooks?"
     assert second_record.assessment == "sufficient"
     assert second_record.evidence_ids == (second_id,)
-    assert search.calls == ["why polling?", "why polling instead of webhooks?"]
+    assert search.calls == ["Why polling?", "why polling instead of webhooks?"]
 
 
 def test_insufficient_evidence_stops_within_limit_with_no_citations() -> None:
     evidence_id = "github:octo-org/example-repo:markdown:unrelated.md:chunk:0"
     search = _FakeSearchHistory(
         {
-            "undocumented rationale?": (
+            "What was the undocumented rationale?": (
                 _evidence(evidence_id, text="Unrelated content."),
             )
         }
     )
     model = _FakeModel(
         [
-            ModelTurn(
-                action=SearchRequested(query="undocumented rationale?"),
-                input_tokens=1,
-                output_tokens=1,
-            ),
             ModelTurn(
                 action=FinalInsufficientEvidence(
                     explanation="The repository does not document this rationale."
@@ -290,19 +285,16 @@ def test_insufficient_evidence_stops_within_limit_with_no_citations() -> None:
         == "The repository does not document this rationale."
     )
     assert result.trace.searches[0].next_query is None
-    assert search.calls == ["undocumented rationale?"]
+    assert search.calls == ["What was the undocumented rationale?"]
 
 
 def test_citation_to_unseen_evidence_id_is_rejected() -> None:
     evidence_id = "github:octo-org/example-repo:markdown:seen.md:chunk:0"
     search = _FakeSearchHistory(
-        {"query": (_evidence(evidence_id, text="Some documented text."),)}
+        {"A question?": (_evidence(evidence_id, text="Some documented text."),)}
     )
     model = _FakeModel(
         [
-            ModelTurn(
-                action=SearchRequested(query="query"), input_tokens=1, output_tokens=1
-            ),
             ModelTurn(
                 action=FinalAnswer(
                     answer="Answer citing evidence never returned. [1]",
@@ -330,7 +322,7 @@ def test_answer_with_mismatched_citation_markers_is_rejected() -> None:
     second_id = "github:octo-org/example-repo:markdown:two.md:chunk:0"
     search = _FakeSearchHistory(
         {
-            "query": (
+            "A question?": (
                 _evidence(first_id, text="First documented reason."),
                 _evidence(second_id, text="Second documented reason."),
             )
@@ -338,9 +330,6 @@ def test_answer_with_mismatched_citation_markers_is_rejected() -> None:
     )
     model = _FakeModel(
         [
-            ModelTurn(
-                action=SearchRequested(query="query"), input_tokens=1, output_tokens=1
-            ),
             ModelTurn(
                 # Two citations resolve (numbers 1 and 2), but the answer
                 # text omits marker [2] -- a mismatch the model must not be
@@ -376,18 +365,34 @@ def test_hard_maximum_enforces_exactly_three_searches() -> None:
                     text=f"Content {i}.",
                 ),
             )
-            for i in range(1, 5)
+            for i in range(2, 5)
         }
+    )
+    initial_question = "A question that never gets resolved?"
+    search._results_by_query[initial_question] = (
+        _evidence(
+            "github:octo-org/example-repo:markdown:doc1.md:chunk:0",
+            text="Content 1.",
+        ),
     )
 
     class _StubbornModel:
         model_id = _MODEL_ID
 
         def __init__(self) -> None:
-            self._next_query_index = 1
+            self._next_query_index = 2
 
-        def start(self, *, question: str) -> ModelTurn:
-            action = SearchRequested(query=f"query-{self._next_query_index}")
+        def start(
+            self,
+            *,
+            question: str,
+            evidence: tuple[RankedEvidence, ...],
+            search_available: bool,
+        ) -> ModelTurn:
+            action = SearchRequested(
+                query=f"query-{self._next_query_index}",
+                missing_information="still need more evidence",
+            )
             self._next_query_index += 1
             return ModelTurn(action=action, input_tokens=1, output_tokens=1)
 
@@ -403,11 +408,11 @@ def test_hard_maximum_enforces_exactly_three_searches() -> None:
 
     with pytest.raises(AnsweringProtocolError):
         answer_question(
-            "A question that never gets resolved?",
+            initial_question,
             search_history=search,
             model=_StubbornModel(),
             clock=_make_clock(),
         )
 
-    assert search.calls == ["query-1", "query-2", "query-3"]
+    assert search.calls == [initial_question, "query-2", "query-3"]
     assert MAX_SEARCH_CALLS == 3

@@ -258,8 +258,8 @@ def test_build_normalized_source_snapshot_uses_shared_defaults_when_omitted(
 ) -> None:
     """With `admission_limits` omitted, the build must use exactly the
     shared `DEFAULT_ADMISSION_LIMITS` object — proven both by the rejected
-    decision carrying that exact object and by a closed-PR count (501) that
-    is over the default's 500 but would fit comfortably under every other
+    decision carrying that exact object and by a closed-PR count (1,501) that
+    is over the default's 1,500 but would fit comfortably under every other
     dimension's much larger default. An explicit override still wins over
     the default for the same estimate."""
 
@@ -274,7 +274,7 @@ def test_build_normalized_source_snapshot_uses_shared_defaults_when_omitted(
         if path == "/repos/octo-org/example-repo/pulls":
             last_url = (
                 "https://api.github.com/repos/octo-org/example-repo/pulls"
-                "?state=closed&per_page=1&page=501"
+                "?state=closed&per_page=1&page=1501"
             )
             return json_response(
                 200, [{}], headers={"Link": f'<{last_url}>; rel="last"'}
@@ -311,7 +311,7 @@ def test_build_normalized_source_snapshot_uses_shared_defaults_when_omitted(
         max_all_issues_and_pull_requests=(
             DEFAULT_ADMISSION_LIMITS.max_all_issues_and_pull_requests
         ),
-        max_closed_pull_requests=600,
+        max_closed_pull_requests=1600,
         max_commits=DEFAULT_ADMISSION_LIMITS.max_commits,
         max_tree_entries=DEFAULT_ADMISSION_LIMITS.max_tree_entries,
     )
@@ -405,8 +405,8 @@ def test_measurement_summary_excludes_credentials_and_counts_requests(
 def test_preflight_uses_shared_admission_defaults_when_omitted(tmp_path: Path) -> None:
     """Preflight with `snapshot_root` supplied but `admission_limits`
     omitted must reject using exactly the shared
-    `DEFAULT_ADMISSION_LIMITS` — proven by a closed-PR count (501) over the
-    default's 500 but comfortably under every other dimension's much larger
+    `DEFAULT_ADMISSION_LIMITS` — proven by a closed-PR count (1,501) over the
+    default's 1,500 but comfortably under every other dimension's much larger
     default. An explicit override for just that dimension then admits the
     identical estimate."""
 
@@ -423,7 +423,7 @@ def test_preflight_uses_shared_admission_defaults_when_omitted(tmp_path: Path) -
         if path == "/repos/octo-org/example-repo/pulls":
             last_url = (
                 "https://api.github.com/repos/octo-org/example-repo/pulls"
-                "?state=closed&per_page=1&page=501"
+                "?state=closed&per_page=1&page=1501"
             )
             return json_response(
                 200, [{}], headers={"Link": f'<{last_url}>; rel="last"'}
@@ -452,7 +452,7 @@ def test_preflight_uses_shared_admission_defaults_when_omitted(tmp_path: Path) -
         max_all_issues_and_pull_requests=(
             DEFAULT_ADMISSION_LIMITS.max_all_issues_and_pull_requests
         ),
-        max_closed_pull_requests=600,
+        max_closed_pull_requests=1600,
         max_commits=DEFAULT_ADMISSION_LIMITS.max_commits,
         max_tree_entries=DEFAULT_ADMISSION_LIMITS.max_tree_entries,
     )

@@ -25,7 +25,6 @@ from reporationale.domain.answering import (
     FinalInsufficientEvidence,
     InsufficientEvidenceOutcome,
     ModelTurn,
-    SearchRequested,
 )
 from reporationale.domain.chunk import SourceChunk
 from reporationale.domain.evaluation import EvaluationCase, ExpectedSource
@@ -124,7 +123,13 @@ class _FakeModel:
     def __init__(self, turns: list[ModelTurn]) -> None:
         self._turns: Iterator[ModelTurn] = iter(turns)
 
-    def start(self, *, question: str) -> ModelTurn:
+    def start(
+        self,
+        *,
+        question: str,
+        evidence: tuple[RankedEvidence, ...],
+        search_available: bool,
+    ) -> ModelTurn:
         return next(self._turns)
 
     def submit_evidence(
@@ -222,11 +227,8 @@ def test_vector_retrieval_runs_answerable_cases_when_confirmed() -> None:
 # --- run_answering -----------------------------------------------------------
 
 
-def _answered_turns(evidence_id: str, question: str) -> list[ModelTurn]:
+def _answered_turns(evidence_id: str) -> list[ModelTurn]:
     return [
-        ModelTurn(
-            action=SearchRequested(query=question), input_tokens=10, output_tokens=5
-        ),
         ModelTurn(
             action=FinalAnswer(
                 answer="Because of X. [1]",
@@ -295,15 +297,10 @@ def test_answering_runs_every_case_with_a_fresh_model_instance() -> None:
 
     def model_factory() -> _FakeModel:
         if not model_factories_called:
-            model = _FakeModel(_answered_turns(evidence_id, "why?"))
+            model = _FakeModel(_answered_turns(evidence_id))
         else:
             model = _FakeModel(
                 [
-                    ModelTurn(
-                        action=SearchRequested(query="was this ever discussed?"),
-                        input_tokens=8,
-                        output_tokens=4,
-                    ),
                     ModelTurn(
                         action=FinalInsufficientEvidence(
                             explanation="No matching decision was found."
@@ -331,10 +328,10 @@ def test_answering_runs_every_case_with_a_fresh_model_instance() -> None:
     assert len(results) == 2
     assert results[0].case_id == "case-1"
     assert isinstance(results[0].outcome, AnsweredOutcome)
-    assert results[0].estimated_cost_usd == pytest.approx(0.03)
+    assert results[0].estimated_cost_usd == pytest.approx(0.02)
     assert results[1].case_id == "case-2"
     assert isinstance(results[1].outcome, InsufficientEvidenceOutcome)
-    assert results[1].estimated_cost_usd == pytest.approx(0.014)
+    assert results[1].estimated_cost_usd == pytest.approx(0.006)
 
 
 def test_answering_without_cost_estimator_leaves_cost_unset() -> None:
@@ -342,7 +339,7 @@ def test_answering_without_cost_estimator_leaves_cost_unset() -> None:
     search = _FakeSearchHistory(
         {"why?": (_evidence(evidence_id, source_id="github:google/gson:issue:1"),)}
     )
-    model = _FakeModel(_answered_turns(evidence_id, "why?"))
+    model = _FakeModel(_answered_turns(evidence_id))
 
     results = run_answering(
         (_answerable_case(),),
@@ -369,7 +366,7 @@ def test_answering_propagates_a_case_failure_without_retrying() -> None:
         calls["count"] += 1
         if calls["count"] == 2:
             raise RuntimeError("simulated provider failure")
-        return _FakeModel(_answered_turns(evidence_id, "why?"))
+        return _FakeModel(_answered_turns(evidence_id))
 
     cases = (
         _answerable_case("case-1"),

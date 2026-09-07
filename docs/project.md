@@ -136,8 +136,9 @@ The indexed approach is expected to provide:
 - predictable provenance and citation metadata;
 - a constrained evidence set from which the answering model must work.
 
-The bounded agent does not replace retrieval. It uses the `search_history` tool
-to formulate or refine searches over the index. Whether this approach actually
+The bounded agent does not replace retrieval. The application first searches
+with the user's exact question; after inspecting those results, the agent may
+formulate a narrower refinement over the index. Whether this approach actually
 outperforms lexical search or direct agentic exploration is an evaluation
 question, not an assumption. Small repositories may not benefit enough to
 justify indexing.

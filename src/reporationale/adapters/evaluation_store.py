@@ -14,10 +14,10 @@ project.
 The caller always supplies the output root: this module never assumes a
 `.local/` directory or any other personal path of its own.
 
-A complete evaluation run directory contains exactly six files:
-`run-manifest.json`, `indexing.json`, `retrieval-results.jsonl`,
-`answer-results.jsonl`, `summary.json`, and `report.md`. Nothing here
-calls GitHub, Voyage, Chroma, or Anthropic.
+A complete evaluation run directory contains exactly seven files:
+`run-manifest.json`, `indexing.json`, `query-usage.json`,
+`retrieval-results.jsonl`, `answer-results.jsonl`, `summary.json`, and
+`report.md`. Nothing here calls GitHub, Voyage, Chroma, or Anthropic.
 
 Semantic derivation and validation of `summary.json` and `report.md` belong
 to `reporationale.application.evaluation_artifacts`. This adapter only
@@ -47,11 +47,13 @@ from reporationale.domain.evaluation import (
     EvaluationSummary,
     IndexingMeasurement,
     RetrievalCaseResult,
+    RetrievalQueryUsage,
     RunManifest,
 )
 
 _RUN_MANIFEST_FILENAME = "run-manifest.json"
 _INDEXING_FILENAME = "indexing.json"
+_QUERY_USAGE_FILENAME = "query-usage.json"
 _RETRIEVAL_RESULTS_FILENAME = "retrieval-results.jsonl"
 _ANSWER_RESULTS_FILENAME = "answer-results.jsonl"
 _SUMMARY_FILENAME = "summary.json"
@@ -283,6 +285,7 @@ class LoadedEvaluationRun(NamedTuple):
 
     manifest: RunManifest
     indexing: IndexingMeasurement
+    query_usage: RetrievalQueryUsage
     retrieval_results: tuple[RetrievalCaseResult, ...]
     answer_results: tuple[AnswerCaseResult, ...]
     summary: EvaluationSummary
@@ -307,12 +310,15 @@ def _first_cross_artifact_mismatch(
         return "the run manifest and summary disagree about run_id"
     if manifest.question_set_version != summary.question_set_version:
         return "the run manifest and summary disagree about question_set_version"
+    if manifest.split != summary.split:
+        return "the run manifest and summary disagree about split"
     return None
 
 
 def _load_evaluation_artifacts_from_directory(directory: Path) -> LoadedEvaluationRun:
     manifest_path = directory / _RUN_MANIFEST_FILENAME
     indexing_path = directory / _INDEXING_FILENAME
+    query_usage_path = directory / _QUERY_USAGE_FILENAME
     retrieval_path = directory / _RETRIEVAL_RESULTS_FILENAME
     answer_path = directory / _ANSWER_RESULTS_FILENAME
     summary_path = directory / _SUMMARY_FILENAME
@@ -321,6 +327,7 @@ def _load_evaluation_artifacts_from_directory(directory: Path) -> LoadedEvaluati
     required_files = (
         manifest_path,
         indexing_path,
+        query_usage_path,
         retrieval_path,
         answer_path,
         summary_path,
@@ -354,6 +361,15 @@ def _load_evaluation_artifacts_from_directory(directory: Path) -> LoadedEvaluati
     except (OSError, UnicodeDecodeError, ValidationError, ValueError):
         raise EvaluationRunCorrupted(
             "The indexing measurement file is missing, unreadable, or invalid."
+        ) from None
+
+    try:
+        query_usage = RetrievalQueryUsage.model_validate_json(
+            query_usage_path.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, ValidationError, ValueError):
+        raise EvaluationRunCorrupted(
+            "The query-usage file is missing, unreadable, or invalid."
         ) from None
 
     try:
@@ -397,6 +413,7 @@ def _load_evaluation_artifacts_from_directory(directory: Path) -> LoadedEvaluati
     return LoadedEvaluationRun(
         manifest=manifest,
         indexing=indexing,
+        query_usage=query_usage,
         retrieval_results=retrieval_results,
         answer_results=answer_results,
         summary=summary,
@@ -427,6 +444,7 @@ def publish_evaluation_artifacts(
     run_id: str,
     manifest: RunManifest,
     indexing: IndexingMeasurement,
+    query_usage: RetrievalQueryUsage,
     retrieval_results: Sequence[RetrievalCaseResult],
     answer_results: Sequence[AnswerCaseResult],
     summary: EvaluationSummary,
@@ -450,10 +468,11 @@ def publish_evaluation_artifacts(
     `question_set`, or a repeated `(case_id, retriever)`/`case_id` pair
     (raised by `build_evaluation_summary` itself).
 
-    Writes every one of the six artifacts (`run-manifest.json`,
-    `indexing.json`, `retrieval-results.jsonl`, `answer-results.jsonl`,
-    `summary.json`, `report.md`) to a staging directory created under
-    `root`, flushes and fsyncs each file, then validates the staged
+    Writes every one of the seven artifacts (`run-manifest.json`,
+    `indexing.json`, `query-usage.json`, `retrieval-results.jsonl`,
+    `answer-results.jsonl`, `summary.json`, `report.md`) to a staging
+    directory created under `root`, flushes and fsyncs each file, then
+    validates the staged
     directory by loading it back through `load_evaluation_run` before
     publishing anything -- the same protocol
     `reporationale.adapters.snapshot_store.publish_snapshot` uses for a
@@ -505,6 +524,10 @@ def publish_evaluation_artifacts(
             indexing.model_dump_json().encode("utf-8"),
         )
         write_file_durably(
+            staging / _QUERY_USAGE_FILENAME,
+            query_usage.model_dump_json().encode("utf-8"),
+        )
+        write_file_durably(
             staging / _RETRIEVAL_RESULTS_FILENAME,
             _serialize_retrieval_results_jsonl(retrieval_results),
         )
@@ -527,6 +550,7 @@ def publish_evaluation_artifacts(
         expected = LoadedEvaluationRun(
             manifest=manifest,
             indexing=indexing,
+            query_usage=query_usage,
             retrieval_results=tuple(retrieval_results),
             answer_results=tuple(answer_results),
             summary=summary,

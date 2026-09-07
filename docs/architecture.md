@@ -276,22 +276,26 @@ application layer. It validates the versioned question set and cross-artifact
 identity, computes retrieval and answering aggregates from raw case results,
 renders the Markdown report, and rechecks both derived artifacts when a run is
 loaded. The filesystem adapter only parses, serializes, and atomically
-publishes the six run files; it does not calculate metrics or depend on
+publishes the seven run files; it does not calculate metrics or depend on
 application modules.
 
-A completed local run contains a manifest, indexing measurements, retrieval
-and answer JSON Lines records, a computed summary, and a computed Markdown
-report. Staged publication and reload validation prevent a partial write from
+A completed local run contains a manifest, indexing measurements, separate
+raw query-embedding usage, retrieval and answer JSON Lines records, a computed
+summary, and a computed Markdown report. Known measurement gaps that cannot be
+attached to an identifiable skipped item are recorded separately from skipped
+items. Staged publication and reload validation prevent a partial write from
 appearing complete. Semantic loading requires the corresponding reviewed
-question set so tampered or mismatched summaries and reports are rejected.
+question set so split leakage, understated applicable query-request counts,
+and tampered or mismatched summaries and reports are rejected.
 
 A thin application runner converts outputs from the existing BM25,
 Voyage/Chroma, and bounded-answering services into those raw per-case records.
 It constructs no provider client and reads no credential; paid retrieval and
 answering paths require an explicit caller confirmation, execute cases
-sequentially, and perform no retry. Selecting development versus held-out cases
-remains an orchestration responsibility so the held-out set is not exposed
-during parameter tuning.
+sequentially, and perform no retry. Every run manifest selects exactly one
+development or held-out split; aggregation, publication, loading, and the raw
+runner reject results that cross that boundary so the held-out set is not
+exposed during parameter tuning.
 
 ## 4. Architecture roles and MVP technologies
 

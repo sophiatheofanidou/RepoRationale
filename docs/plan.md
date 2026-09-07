@@ -10,42 +10,43 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Complete split-safe orchestration and evaluate the Gson vector index
+**Active task:** Fix evaluation targets and prepare the Gson development answering run
 **Task status:** Ready
-**Last completed work:** The pinned `google/gson` normalized-source build,
-offline corpus characterization, deterministic chunk artifact, reviewed
-question-set version 1, and development-only BM25 pilot are complete. The
-snapshot at `b3f4ca20087f9066de4c340522ff84e0558e1ad1` contains 13,893 normalized
-sources and produces 17,479 chunks at the selected 2,000-character maximum.
-The BM25 pilot hit one of three answerable development cases at rank one and
-missed the semantic-reword and query-refinement cases. A thin evaluation
-runner now connects the existing BM25, Voyage/Chroma, and answering workflows
-to the raw evaluation records, with an explicit paid-mode gate and no retries.
-**Verification performed:** Codex reviewed the implementation diff and each
-expected source in the question set, corrected one question whose wording
-incorrectly treated a proposal as an adopted change, corrected two negative-
-control notes that overstated what their search terms established, and
-independently ran the full suite (629 passed), Ruff, and mypy successfully. The
-offline pilot touched only development cases. No Voyage, Chroma-build, or
-Anthropic call was made.
+**Last completed work:** The split-safe seven-file run contract and the approved
+Gson Voyage development experiment are complete. The corrected run records
+137 document requests and 2,965,021 tokens plus four query requests and 49
+tokens for a combined `$0.17790420` standard-list-price estimate. It reports
+the blank-commit measurement gap, retains an executable offline reproduction
+command, and reuses the complete 17,479-record vector index. Voyage improved
+development Hit@5 from 1/3 for BM25 to 2/3 and MRR@5 from 0.333 to 0.444; the
+fixed refinement diagnostic remained an exact-source miss. No held-out case or
+Anthropic model was called.
+**Verification performed:** Claude reported 668 passing full-suite tests and
+clean Ruff and mypy checks before its final private-runner edit, followed by
+130 focused tests and fresh Ruff and mypy checks. Codex reviewed the source
+diff and both run directories, independently ran all 130 focused evaluation
+tests, validated the private runner offline, reloaded the corrected run through
+the semantic loader (`development`, four split cases, six retrieval records,
+zero answer records, four query requests, 49 tokens), and ran targeted Ruff.
+Codex found and corrected three test-only typing issues missed by the handoff;
+strict mypy then passed across all 79 source files and the 57 directly affected
+tests passed.
 **Known limitations or deviations:** The successful ingestion required
 run-specific limits above the product defaults; no permanent limit change has
 been accepted. Blank commit messages are valid Git data and are now excluded as
 non-rationale content, but the completed snapshot cannot reconstruct the exact
-count or identities skipped. The source build remains usable, while the final
-indexing report must disclose this measurement gap rather than record zero
-skips.
-**Open questions or blockers:** The raw runner deliberately accepts caller-
-selected cases, but the published run contract does not yet record or enforce
-whether a run covers the development or held-out split. That must be corrected
-before partial results can be presented as a complete evaluation run. Paid
-Voyage indexing and development retrieval also require explicit user approval.
-Retrieval-quality targets cannot be fixed until that development comparison is
-complete; held-out retrieval and all Anthropic answering remain gated afterward.
-**Next action:** Add and test an explicit split to the evaluation-run manifest,
-summary, publication, and loading validation; then, after explicit approval,
-run the bounded Voyage document-index and development-only retrieval stage.
-Do not query any held-out case or call Anthropic.
+count or identities skipped. The corrected indexing report discloses this
+measurement gap separately rather than claiming zero known limitations.
+**Open questions or blockers:** There is no remaining implementation blocker in
+the accepted retrieval slice. Numeric held-out success targets and the
+Anthropic development-run stop/cost ceiling must be fixed before any further
+paid call. The successful ingestion still used run-specific limits above the
+product defaults; no permanent limit change has been accepted.
+**Next action:** Codex proposes the held-out success targets and a bounded
+four-case Gson development-answering protocol using the selected
+`claude-opus-5`. After separate user approval of its exact Anthropic ceiling,
+Claude implements or runs that development-only stage against the existing
+index. Do not query held-out cases yet.
 
 The project now has tested, repeatable ingestion, retrieval, and bounded
 agentic-answering foundations, including a completed and recorded Claude
@@ -71,16 +72,16 @@ external-service credentials (D-022). The earlier evaluation-corpus deferral
 
 ## 2. Immediate next steps
 
-1. Make evaluation-run publication explicitly split-aware so a development-
-   only artifact cannot be reported as a complete 12-case run.
-2. Build the Gson Voyage/Chroma index from the validated 17,479-chunk artifact
-   under an explicit spend ceiling, recording requests, tokens, cost, phase
-   timing, size, and any failure.
-3. Run only the four development cases through vector retrieval, compare the
-   three answerable cases with BM25, and test a bounded refinement only on the
-   designated development case.
-4. Fix numeric targets and stop conditions from the development results before
-   requesting separate approval for held-out retrieval or Anthropic answering.
+1. Fix numeric held-out targets and the development-answering stop/cost
+   conditions from the completed retrieval pilot.
+2. Run only the four development cases through the bounded answering workflow
+   using the selected `claude-opus-5`, reusing the existing vector index.
+3. Review grounding, citations, abstention, refinement behaviour, latency, and
+   cost; make any justified development-only correction before freezing the
+   protocol.
+4. Request separate approval before the first held-out retrieval or answering
+   call, then run the eight held-out cases exactly once without tuning against
+   their results.
 
 ## 3. Milestones
 

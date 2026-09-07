@@ -17,6 +17,7 @@ from reporationale.adapters.evaluation_store import (
 )
 from reporationale.application.evaluation_metrics import build_evaluation_summary
 from reporationale.application.evaluation_report import render_markdown_report
+from reporationale.application.evaluation_runner import DEFAULT_VECTOR_RETRIEVER_NAME
 from reporationale.domain.evaluation import (
     QUESTION_SET_SCHEMA_VERSION,
     RUN_MANIFEST_SCHEMA_VERSION,
@@ -24,6 +25,7 @@ from reporationale.domain.evaluation import (
     EvaluationQuestionSet,
     IndexingMeasurement,
     RetrievalCaseResult,
+    RetrievalQueryUsage,
     RunManifest,
 )
 
@@ -43,11 +45,50 @@ def _cross_artifact_mismatch(
     return None
 
 
+def _query_usage_mismatch(
+    *,
+    query_usage: RetrievalQueryUsage,
+    retrieval_results: Sequence[RetrievalCaseResult],
+) -> str | None:
+    """A raw `RetrievalQueryUsage` record must not understate the number of
+    query embeddings its own run's vector-retrieval results required: each
+    `DEFAULT_VECTOR_RETRIEVER_NAME`-attributed result cost exactly one
+    first-search query embedding, plus one more when
+    `includes_refinement_diagnostic` is set. This is a lower-bound check,
+    not an exact-equality one: a caller may record additional query calls
+    (for example exploratory ones) this contract has no way to see from
+    `retrieval_results` alone."""
+    vector_result_count = sum(
+        1
+        for result in retrieval_results
+        if result.retriever == DEFAULT_VECTOR_RETRIEVER_NAME
+    )
+    minimum_expected = vector_result_count + (
+        1 if query_usage.includes_refinement_diagnostic else 0
+    )
+    if query_usage.query_embedding_request_count < minimum_expected:
+        return (
+            "query_usage.query_embedding_request_count "
+            f"({query_usage.query_embedding_request_count}) is less than the "
+            f"minimum implied by {vector_result_count} "
+            f"{DEFAULT_VECTOR_RETRIEVER_NAME!r} retrieval result(s)"
+            + (
+                " plus the refinement diagnostic"
+                if query_usage.includes_refinement_diagnostic
+                else ""
+            )
+            + f" ({minimum_expected})"
+        )
+    return None
+
+
 def _validate_inputs(
     *,
     manifest: RunManifest,
     indexing: IndexingMeasurement,
+    query_usage: RetrievalQueryUsage,
     question_set: EvaluationQuestionSet,
+    retrieval_results: Sequence[RetrievalCaseResult],
 ) -> None:
     if manifest.run_manifest_schema_version != RUN_MANIFEST_SCHEMA_VERSION:
         raise ValueError(
@@ -66,6 +107,11 @@ def _validate_inputs(
     )
     if mismatch is not None:
         raise ValueError(f"Cannot use an inconsistent evaluation run: {mismatch}.")
+    usage_mismatch = _query_usage_mismatch(
+        query_usage=query_usage, retrieval_results=retrieval_results
+    )
+    if usage_mismatch is not None:
+        raise ValueError(f"Cannot use an inconsistent evaluation run: {usage_mismatch}.")
 
 
 def publish_evaluation_run(
@@ -74,6 +120,7 @@ def publish_evaluation_run(
     run_id: str,
     manifest: RunManifest,
     indexing: IndexingMeasurement,
+    query_usage: RetrievalQueryUsage,
     question_set: EvaluationQuestionSet,
     retrieval_results: Sequence[RetrievalCaseResult],
     answer_results: Sequence[AnswerCaseResult],
@@ -82,21 +129,29 @@ def publish_evaluation_run(
     """Derive and atomically publish one complete evaluation run."""
     if manifest.run_id != run_id:
         raise ValueError("manifest.run_id must equal run_id")
-    _validate_inputs(manifest=manifest, indexing=indexing, question_set=question_set)
+    _validate_inputs(
+        manifest=manifest,
+        indexing=indexing,
+        query_usage=query_usage,
+        question_set=question_set,
+        retrieval_results=retrieval_results,
+    )
     summary = build_evaluation_summary(
         run_id=run_id,
         question_set=question_set,
+        split=manifest.split,
         retrieval_results=retrieval_results,
         answer_results=answer_results,
     )
     report_markdown = render_markdown_report(
-        manifest=manifest, indexing=indexing, summary=summary
+        manifest=manifest, indexing=indexing, query_usage=query_usage, summary=summary
     )
     return publish_evaluation_artifacts(
         root=root,
         run_id=run_id,
         manifest=manifest,
         indexing=indexing,
+        query_usage=query_usage,
         retrieval_results=retrieval_results,
         answer_results=answer_results,
         summary=summary,
@@ -114,11 +169,14 @@ def load_evaluation_run(
         _validate_inputs(
             manifest=loaded.manifest,
             indexing=loaded.indexing,
+            query_usage=loaded.query_usage,
             question_set=question_set,
+            retrieval_results=loaded.retrieval_results,
         )
         recomputed_summary = build_evaluation_summary(
             run_id=loaded.manifest.run_id,
             question_set=question_set,
+            split=loaded.manifest.split,
             retrieval_results=loaded.retrieval_results,
             answer_results=loaded.answer_results,
         )
@@ -134,6 +192,7 @@ def load_evaluation_run(
     recomputed_report = render_markdown_report(
         manifest=loaded.manifest,
         indexing=loaded.indexing,
+        query_usage=loaded.query_usage,
         summary=recomputed_summary,
     )
     if loaded.report_markdown != recomputed_report:

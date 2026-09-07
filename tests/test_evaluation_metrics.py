@@ -35,11 +35,14 @@ def _source(number: int) -> ExpectedSource:
 
 
 def _answered_case(
-    case_id: str, *expected_source_numbers: int, category: str = "direct_retrieval"
+    case_id: str,
+    *expected_source_numbers: int,
+    category: str = "direct_retrieval",
+    split: str = "development",
 ) -> EvaluationCase:
     return EvaluationCase(
         case_id=case_id,
-        split="development",
+        split=split,
         question=f"Why was {case_id} changed?",
         category=category,
         expected_outcome="answered",
@@ -48,10 +51,10 @@ def _answered_case(
     )
 
 
-def _insufficient_case(case_id: str) -> EvaluationCase:
+def _insufficient_case(case_id: str, *, split: str = "held_out") -> EvaluationCase:
     return EvaluationCase(
         case_id=case_id,
-        split="held_out",
+        split=split,
         question=f"Why was {case_id} changed?",
         category="unanswerable_control",
         expected_outcome="insufficient_evidence",
@@ -245,18 +248,26 @@ def test_aggregate_metrics_grouped_by_retriever_and_averaged() -> None:
             retrieved_source_ids=("github:google/gson:issue:1",),
             latency_seconds=0.05,
         ),
+        RetrievalCaseResult(
+            case_id="case-2",
+            retriever="vector",
+            retrieved_source_ids=("github:google/gson:issue:98",),
+            latency_seconds=0.03,
+        ),
     ]
 
-    aggregates = compute_retriever_aggregate_metrics(question_set, results)
+    aggregates = compute_retriever_aggregate_metrics(
+        question_set, results, split="development"
+    )
     by_retriever = {aggregate.retriever: aggregate for aggregate in aggregates}
 
     assert by_retriever["bm25"].case_count == 2
     assert by_retriever["bm25"].hit_rate_at_5 == pytest.approx(0.5)
     assert by_retriever["bm25"].mean_mrr_at_5 == pytest.approx(0.5)
     assert by_retriever["bm25"].mean_latency_seconds == pytest.approx(0.01)
-    assert by_retriever["vector"].case_count == 1
-    assert by_retriever["vector"].hit_rate_at_5 == pytest.approx(1.0)
-    assert by_retriever["vector"].mean_latency_seconds == pytest.approx(0.05)
+    assert by_retriever["vector"].case_count == 2
+    assert by_retriever["vector"].hit_rate_at_5 == pytest.approx(0.5)
+    assert by_retriever["vector"].mean_latency_seconds == pytest.approx(0.04)
 
 
 def test_aggregate_metrics_reject_unknown_case_id() -> None:
@@ -270,7 +281,7 @@ def test_aggregate_metrics_reject_unknown_case_id() -> None:
         )
     ]
     with pytest.raises(ValueError, match="unknown case_id"):
-        compute_retriever_aggregate_metrics(question_set, results)
+        compute_retriever_aggregate_metrics(question_set, results, split="development")
 
 
 def test_aggregate_metrics_reject_duplicate_case_retriever_pair() -> None:
@@ -290,7 +301,77 @@ def test_aggregate_metrics_reject_duplicate_case_retriever_pair() -> None:
         ),
     ]
     with pytest.raises(ValueError, match="duplicate retrieval result"):
-        compute_retriever_aggregate_metrics(question_set, results)
+        compute_retriever_aggregate_metrics(question_set, results, split="development")
+
+
+def test_aggregate_metrics_reject_case_from_other_split() -> None:
+    """A retrieval result for a case that exists in the question set but
+    belongs to a different split than the one selected must never be
+    silently scored or ignored."""
+    question_set = _question_set(
+        _answered_case("case-1", 1, split="development"),
+        _answered_case("case-2", 2, split="held_out"),
+    )
+    results = [
+        RetrievalCaseResult(
+            case_id="case-1",
+            retriever="bm25",
+            retrieved_source_ids=("github:google/gson:issue:1",),
+            latency_seconds=0.0,
+        ),
+        RetrievalCaseResult(
+            case_id="case-2",
+            retriever="bm25",
+            retrieved_source_ids=("github:google/gson:issue:2",),
+            latency_seconds=0.0,
+        ),
+    ]
+    with pytest.raises(ValueError, match="belongs to split 'held_out'"):
+        compute_retriever_aggregate_metrics(question_set, results, split="development")
+
+
+def test_aggregate_metrics_reject_incomplete_retriever_coverage() -> None:
+    """A retriever must supply exactly one result for every answerable
+    case in the selected split; a partial development-only run must never
+    be accepted as if it covered the whole split."""
+    question_set = _question_set(
+        _answered_case("case-1", 1), _answered_case("case-2", 2)
+    )
+    results = [
+        RetrievalCaseResult(
+            case_id="case-1",
+            retriever="bm25",
+            retrieved_source_ids=("github:google/gson:issue:1",),
+            latency_seconds=0.0,
+        ),
+    ]
+    with pytest.raises(ValueError, match="does not have exactly one result"):
+        compute_retriever_aggregate_metrics(question_set, results, split="development")
+
+
+def test_aggregate_metrics_reject_insufficient_evidence_case_in_coverage() -> None:
+    """An `insufficient_evidence` case in the selected split must never
+    appear among a retriever's results: retrieval metrics only exist for
+    `answered` cases, so its presence is an extra, uncovered case_id."""
+    question_set = _question_set(
+        _answered_case("case-1", 1), _insufficient_case("case-2", split="development")
+    )
+    results = [
+        RetrievalCaseResult(
+            case_id="case-1",
+            retriever="bm25",
+            retrieved_source_ids=("github:google/gson:issue:1",),
+            latency_seconds=0.0,
+        ),
+        RetrievalCaseResult(
+            case_id="case-2",
+            retriever="bm25",
+            retrieved_source_ids=(),
+            latency_seconds=0.0,
+        ),
+    ]
+    with pytest.raises(ValueError, match="does not have exactly one result"):
+        compute_retriever_aggregate_metrics(question_set, results, split="development")
 
 
 # --- compute_answer_aggregate_metrics ----------------------------------------
@@ -323,7 +404,8 @@ def _answered_outcome() -> AnsweredOutcome:
 
 def test_answer_aggregate_metrics_computes_outcome_accuracy_and_totals() -> None:
     question_set = _question_set(
-        _answered_case("case-1", 1), _insufficient_case("case-2")
+        _answered_case("case-1", 1),
+        _insufficient_case("case-2", split="development"),
     )
     results = [
         AnswerCaseResult(
@@ -355,7 +437,7 @@ def test_answer_aggregate_metrics_computes_outcome_accuracy_and_totals() -> None
         ),
     ]
 
-    metrics = compute_answer_aggregate_metrics(question_set, results)
+    metrics = compute_answer_aggregate_metrics(question_set, results, split="development")
     assert metrics.case_count == 2
     assert metrics.outcome_accuracy == pytest.approx(0.5)
     assert metrics.total_input_tokens == 300
@@ -373,7 +455,7 @@ def test_answer_aggregate_metrics_correct_abstention_counts_as_accurate() -> Non
             trace=_trace(),
         )
     ]
-    metrics = compute_answer_aggregate_metrics(question_set, results)
+    metrics = compute_answer_aggregate_metrics(question_set, results, split="held_out")
     assert metrics.outcome_accuracy == pytest.approx(1.0)
     assert metrics.total_estimated_cost_usd is None
 
@@ -384,7 +466,9 @@ def test_answer_aggregate_metrics_reject_duplicate_case_id() -> None:
         case_id="case-1", outcome=_answered_outcome(), trace=_trace()
     )
     with pytest.raises(ValueError, match="duplicate answer result"):
-        compute_answer_aggregate_metrics(question_set, [result, result])
+        compute_answer_aggregate_metrics(
+            question_set, [result, result], split="development"
+        )
 
 
 def test_answer_aggregate_metrics_reject_unknown_case_id() -> None:
@@ -393,7 +477,36 @@ def test_answer_aggregate_metrics_reject_unknown_case_id() -> None:
         case_id="does-not-exist", outcome=_answered_outcome(), trace=_trace()
     )
     with pytest.raises(ValueError, match="unknown case_id"):
-        compute_answer_aggregate_metrics(question_set, [result])
+        compute_answer_aggregate_metrics(question_set, [result], split="development")
+
+
+def test_answer_aggregate_metrics_reject_case_from_other_split() -> None:
+    question_set = _question_set(
+        _answered_case("case-1", 1, split="development"),
+        _insufficient_case("case-2", split="held_out"),
+    )
+    result = AnswerCaseResult(
+        case_id="case-2",
+        outcome=InsufficientEvidenceOutcome(explanation="No documented rationale."),
+        trace=_trace(),
+    )
+    with pytest.raises(ValueError, match="belongs to split 'held_out'"):
+        compute_answer_aggregate_metrics(question_set, [result], split="development")
+
+
+def test_answer_aggregate_metrics_reject_incomplete_split_coverage() -> None:
+    """Answer results, when present, must cover every case in the
+    selected split -- including insufficient-evidence controls -- or the
+    aggregate must be rejected rather than silently computed over a subset."""
+    question_set = _question_set(
+        _answered_case("case-1", 1),
+        _insufficient_case("case-2", split="development"),
+    )
+    result = AnswerCaseResult(
+        case_id="case-1", outcome=_answered_outcome(), trace=_trace()
+    )
+    with pytest.raises(ValueError, match="do not cover every case in split"):
+        compute_answer_aggregate_metrics(question_set, [result], split="development")
 
 
 # --- build_evaluation_summary -------------------------------------------------
@@ -416,10 +529,12 @@ def test_build_evaluation_summary_combines_retrieval_and_answer_metrics() -> Non
     summary = build_evaluation_summary(
         run_id="run-1",
         question_set=question_set,
+        split="development",
         retrieval_results=retrieval_results,
         answer_results=answer_results,
     )
     assert summary.run_id == "run-1"
+    assert summary.split == "development"
     assert summary.case_count == 1
     assert len(summary.retrieval_metrics) == 1
     assert summary.answer_metrics is not None
@@ -439,7 +554,46 @@ def test_build_evaluation_summary_answer_metrics_none_for_retrieval_only_run() -
     summary = build_evaluation_summary(
         run_id="run-1",
         question_set=question_set,
+        split="development",
         retrieval_results=retrieval_results,
         answer_results=[],
     )
     assert summary.answer_metrics is None
+
+
+def test_build_evaluation_summary_case_count_is_scoped_to_the_selected_split() -> None:
+    """`case_count` must reflect only the selected split's cases, never
+    the full question set -- otherwise a partial development-only run's
+    summary could be mistaken for a complete run over every case."""
+    question_set = _question_set(
+        _answered_case("case-1", 1, split="development"),
+        _answered_case("case-2", 2, split="held_out"),
+    )
+    retrieval_results = [
+        RetrievalCaseResult(
+            case_id="case-1",
+            retriever="bm25",
+            retrieved_source_ids=("github:google/gson:issue:1",),
+            latency_seconds=0.01,
+        )
+    ]
+    summary = build_evaluation_summary(
+        run_id="run-1",
+        question_set=question_set,
+        split="development",
+        retrieval_results=retrieval_results,
+        answer_results=[],
+    )
+    assert summary.case_count == 1
+
+
+def test_build_evaluation_summary_rejects_split_with_no_cases() -> None:
+    question_set = _question_set(_answered_case("case-1", 1, split="development"))
+    with pytest.raises(ValueError, match="no cases for split"):
+        build_evaluation_summary(
+            run_id="run-1",
+            question_set=question_set,
+            split="held_out",
+            retrieval_results=[],
+            answer_results=[],
+        )

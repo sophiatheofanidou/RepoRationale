@@ -14,8 +14,10 @@ from reporationale.domain.evaluation import (
     EvaluationQuestionSet,
     ExpectedSource,
     IndexingMeasurement,
+    MeasurementLimitation,
     PhaseTiming,
     RetrievalCaseResult,
+    RetrievalQueryUsage,
     RunManifest,
 )
 from reporationale.domain.repository_identity import RepositoryIdentity
@@ -195,6 +197,118 @@ def test_indexing_measurement_carries_no_credential_field() -> None:
         )
 
 
+def test_indexing_measurement_measurement_limitations_default_to_empty() -> None:
+    """A run with no known measurement gap must not be required to state
+    one; an old persisted record without this field must still load."""
+    measurement = IndexingMeasurement.model_validate(
+        {
+            "repository": _IDENTITY.model_dump(),
+            "resolved_commit_sha": _COMMIT_SHA,
+            "github_request_count": 1,
+            "chunk_count": 1,
+        }
+    )
+    assert measurement.measurement_limitations == ()
+    assert measurement.skipped_items == ()
+
+
+def test_indexing_measurement_round_trips_with_measurement_limitations() -> None:
+    measurement = IndexingMeasurement(
+        repository=_IDENTITY,
+        resolved_commit_sha=_COMMIT_SHA,
+        github_request_count=1,
+        chunk_count=1,
+        measurement_limitations=(
+            MeasurementLimitation(
+                description=(
+                    "Blank-message commits were excluded as non-rationale "
+                    "content during source ingestion, but their exact "
+                    "count and identities cannot be reconstructed from "
+                    "the completed normalized snapshot."
+                )
+            ),
+        ),
+    )
+    reloaded = IndexingMeasurement.model_validate_json(measurement.model_dump_json())
+    assert reloaded == measurement
+    assert len(reloaded.measurement_limitations) == 1
+
+
+def test_indexing_measurement_empty_skipped_items_and_limitations_are_distinguishable() -> (
+    None
+):
+    """An empty `skipped_items` (no individually identified item was
+    skipped) must remain distinguishable from a populated
+    `measurement_limitations` (a known, unquantifiable measurement gap
+    exists) -- the two are independent facts about the same run."""
+    measurement = IndexingMeasurement(
+        repository=_IDENTITY,
+        resolved_commit_sha=_COMMIT_SHA,
+        github_request_count=1,
+        chunk_count=1,
+        skipped_items=(),
+        measurement_limitations=(MeasurementLimitation(description="Known gap."),),
+    )
+    assert measurement.skipped_items == ()
+    assert len(measurement.measurement_limitations) == 1
+
+
+def test_measurement_limitation_rejects_blank_description() -> None:
+    with pytest.raises(ValidationError):
+        MeasurementLimitation(description="   ")
+
+
+# --- RetrievalQueryUsage ------------------------------------------------------
+
+
+def test_retrieval_query_usage_round_trips() -> None:
+    usage = RetrievalQueryUsage(
+        query_embedding_request_count=4,
+        query_embedding_token_count=49,
+        estimated_query_embedding_cost_usd=0.00000294,
+        includes_refinement_diagnostic=True,
+    )
+    reloaded = RetrievalQueryUsage.model_validate_json(usage.model_dump_json())
+    assert reloaded == usage
+
+
+def test_retrieval_query_usage_allows_zero_usage_for_a_non_paid_run() -> None:
+    usage = RetrievalQueryUsage(
+        query_embedding_request_count=0,
+        query_embedding_token_count=0,
+        estimated_query_embedding_cost_usd=None,
+        includes_refinement_diagnostic=False,
+    )
+    assert usage.query_embedding_request_count == 0
+    assert usage.estimated_query_embedding_cost_usd is None
+
+
+def test_retrieval_query_usage_rejects_negative_request_count() -> None:
+    with pytest.raises(ValidationError):
+        RetrievalQueryUsage(
+            query_embedding_request_count=-1,
+            query_embedding_token_count=0,
+            includes_refinement_diagnostic=False,
+        )
+
+
+def test_retrieval_query_usage_rejects_negative_cost() -> None:
+    with pytest.raises(ValidationError):
+        RetrievalQueryUsage(
+            query_embedding_request_count=1,
+            query_embedding_token_count=1,
+            estimated_query_embedding_cost_usd=-0.01,
+            includes_refinement_diagnostic=False,
+        )
+
+
+def test_retrieval_query_usage_requires_includes_refinement_diagnostic() -> None:
+    with pytest.raises(ValidationError):
+        RetrievalQueryUsage.model_validate(
+            {"query_embedding_request_count": 0, "query_embedding_token_count": 0}
+        )
+
+
 # --- RetrievalCaseResult ----------------------------------------------------
 
 
@@ -280,7 +394,7 @@ def test_answer_case_result_rejects_blank_case_id() -> None:
 
 def test_run_manifest_round_trips() -> None:
     manifest = RunManifest(
-        run_manifest_schema_version=1,
+        run_manifest_schema_version=2,
         run_id="gson-2026-09-10",
         created_at=datetime(2026, 9, 10, tzinfo=UTC),
         command="uv run python -m reporationale.evaluation gson-2026-09-10",
@@ -292,6 +406,7 @@ def test_run_manifest_round_trips() -> None:
         max_chars=2000,
         retrieval_result_limit=5,
         question_set_version=1,
+        split="development",
         embedding_model="voyage-4",
         answering_model="claude-opus-5",
         agent_version="test-agent/1",
@@ -304,7 +419,7 @@ def test_run_manifest_round_trips() -> None:
 def test_run_manifest_rejects_timezone_naive_created_at() -> None:
     with pytest.raises(ValidationError):
         RunManifest(
-            run_manifest_schema_version=1,
+            run_manifest_schema_version=2,
             run_id="run-1",
             created_at=datetime(2026, 9, 10),
             command="uv run ...",
@@ -316,13 +431,14 @@ def test_run_manifest_rejects_timezone_naive_created_at() -> None:
             max_chars=2000,
             retrieval_result_limit=5,
             question_set_version=1,
+            split="development",
         )
 
 
 def test_run_manifest_rejects_invalid_commit_sha() -> None:
     with pytest.raises(ValidationError):
         RunManifest(
-            run_manifest_schema_version=1,
+            run_manifest_schema_version=2,
             run_id="run-1",
             created_at=datetime(2026, 9, 10, tzinfo=UTC),
             command="uv run ...",
@@ -334,13 +450,14 @@ def test_run_manifest_rejects_invalid_commit_sha() -> None:
             max_chars=2000,
             retrieval_result_limit=5,
             question_set_version=1,
+            split="development",
         )
 
 
 def test_run_manifest_rejects_blank_run_id() -> None:
     with pytest.raises(ValidationError):
         RunManifest(
-            run_manifest_schema_version=1,
+            run_manifest_schema_version=2,
             run_id="   ",
             created_at=datetime(2026, 9, 10, tzinfo=UTC),
             command="uv run ...",
@@ -352,4 +469,46 @@ def test_run_manifest_rejects_blank_run_id() -> None:
             max_chars=2000,
             retrieval_result_limit=5,
             question_set_version=1,
+            split="development",
+        )
+
+
+def test_run_manifest_rejects_invalid_split() -> None:
+    with pytest.raises(ValidationError):
+        RunManifest(
+            run_manifest_schema_version=2,
+            run_id="run-1",
+            created_at=datetime(2026, 9, 10, tzinfo=UTC),
+            command="uv run ...",
+            repository=_IDENTITY,
+            resolved_commit_sha=_COMMIT_SHA,
+            source_schema_version=1,
+            chunk_schema_version=1,
+            chunker_algorithm_version=1,
+            max_chars=2000,
+            retrieval_result_limit=5,
+            question_set_version=1,
+            split="not-a-real-split",
+        )
+
+
+def test_run_manifest_rejects_blank_command() -> None:
+    """The manifest's `command` field is the run's reproducibility
+    record; a blank command can never describe how the run was actually
+    produced."""
+    with pytest.raises(ValidationError):
+        RunManifest(
+            run_manifest_schema_version=2,
+            run_id="run-1",
+            created_at=datetime(2026, 9, 10, tzinfo=UTC),
+            command="   ",
+            repository=_IDENTITY,
+            resolved_commit_sha=_COMMIT_SHA,
+            source_schema_version=1,
+            chunk_schema_version=1,
+            chunker_algorithm_version=1,
+            max_chars=2000,
+            retrieval_result_limit=5,
+            question_set_version=1,
+            split="development",
         )

@@ -2,12 +2,20 @@
 
 This module defines the versioned evaluation question-set contract and the
 typed records one reproducible evaluation run is built from: indexing
-measurements, raw per-case retrieval results, and per-case answer results.
-It also defines the aggregate contracts (`RetrieverAggregateMetrics`,
-`AnswerAggregateMetrics`, `EvaluationSummary`) those raw results are
-reduced to. Aggregate computation itself lives in
+measurements, retrieval-query usage, raw per-case retrieval results, and
+per-case answer results. It also defines the aggregate contracts
+(`RetrieverAggregateMetrics`, `AnswerAggregateMetrics`, `EvaluationSummary`)
+those raw results are reduced to. Aggregate computation itself lives in
 `reporationale.application.evaluation_metrics`, never here: this module
 only defines shapes.
+
+`IndexingMeasurement` measures document (build-time) embedding;
+`RetrievalQueryUsage` is the separate raw artifact for a run's
+retrieval-time query-embedding usage -- the two must never be conflated.
+`MeasurementLimitation` records a known, named measurement gap (a category
+of items known to be skipped/altered without a reconstructable identifier
+or count), kept distinct from `SkippedItem`, which always names one real
+item.
 
 Answer results deliberately reuse the existing provider-neutral
 `AnswerOutcome`/`RunTrace` contracts from `reporationale.domain.answering`
@@ -184,7 +192,11 @@ class PhaseTiming(BaseModel):
 
 
 class SkippedItem(BaseModel):
-    """One item an indexing run skipped or failed to ingest, and why."""
+    """One individually identifiable item an indexing run skipped or
+    failed to ingest, and why. Requires a real `identifier`: a category of
+    items known to have been skipped or altered without an individually
+    reconstructable identifier or exact count belongs in
+    `MeasurementLimitation` instead, never fabricated here."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -197,11 +209,41 @@ class SkippedItem(BaseModel):
         return _require_non_blank(value)
 
 
+class MeasurementLimitation(BaseModel):
+    """A known, named gap in what one indexing run could measure or
+    reconstruct after the fact -- distinct from `SkippedItem`, which
+    requires a real, individually identifiable item. Recorded when a
+    category of items is known to have been skipped, altered, or excluded,
+    but individual identifiers or an exact count cannot be reconstructed
+    from the completed snapshot (for example: blank-message commits
+    excluded as non-rationale content, whose exact count and identities
+    the completed snapshot cannot reconstruct).
+
+    An empty `IndexingMeasurement.measurement_limitations` tuple means no
+    such gap is known for this run; it must never be conflated with
+    `skipped_items` being empty, which only means no individually
+    identified item was skipped."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    description: str = Field(min_length=1)
+
+    @field_validator("description")
+    @classmethod
+    def description_must_not_be_blank(cls, value: str) -> str:
+        return _require_non_blank(value)
+
+
 class IndexingMeasurement(BaseModel):
     """Operational measurements for one repeatable indexing run, recorded
     independently of retrieval or answer quality. Carries no credential,
     HTTP header, environment value, or provider response object -- only
-    counts, timings, and cost estimates."""
+    counts, timings, and cost estimates.
+
+    `embedding_request_count`/`embedding_token_count`/
+    `estimated_embedding_cost_usd` measure document (build-time) embedding
+    only; a run's retrieval-time query-embedding usage is a separate raw
+    artifact (`RetrievalQueryUsage`), never folded in here."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -216,6 +258,9 @@ class IndexingMeasurement(BaseModel):
     estimated_embedding_cost_usd: float | None = Field(default=None, ge=0)
     snapshot_size_bytes: _StrictNonNegativeInt | None = None
     skipped_items: tuple[SkippedItem, ...] = Field(default_factory=tuple)
+    measurement_limitations: tuple[MeasurementLimitation, ...] = Field(
+        default_factory=tuple
+    )
 
     @field_validator("resolved_commit_sha")
     @classmethod
@@ -230,6 +275,38 @@ class IndexingMeasurement(BaseModel):
     @field_validator("estimated_embedding_cost_usd")
     @classmethod
     def estimated_embedding_cost_usd_must_be_finite(
+        cls, value: float | None
+    ) -> float | None:
+        if value is not None:
+            _require_finite(value)
+        return value
+
+
+class RetrievalQueryUsage(BaseModel):
+    """Aggregate Voyage query-embedding usage for one evaluation run's
+    retrieval stage, persisted as its own raw artifact. Deliberately
+    separate from `IndexingMeasurement`, which measures document
+    (build-time) embedding: retrieval-query usage must never be folded
+    into the document-embedding counts merely to avoid adding a contract.
+
+    `includes_refinement_diagnostic` records whether the counted totals
+    include the one separately-labelled bounded refinement query this
+    project's development retrieval protocol allows in addition to each
+    case's mandatory first search (see
+    `reporationale.application.evaluation_runner`), so a reader can tell
+    whether the totals reflect only first-search retrieval or also that
+    diagnostic call."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    query_embedding_request_count: _StrictNonNegativeInt
+    query_embedding_token_count: _StrictNonNegativeInt
+    estimated_query_embedding_cost_usd: float | None = Field(default=None, ge=0)
+    includes_refinement_diagnostic: bool
+
+    @field_validator("estimated_query_embedding_cost_usd")
+    @classmethod
+    def estimated_query_embedding_cost_usd_must_be_finite(
         cls, value: float | None
     ) -> float | None:
         if value is not None:
@@ -422,12 +499,18 @@ class EvaluationSummary(BaseModel):
     quality and cost metrics. Every aggregate here is computed from the
     run's own case results
     (`reporationale.application.evaluation_metrics.build_evaluation_summary`),
-    never accepted as an independent value."""
+    never accepted as an independent value.
+
+    `split` records which of the question set's two disjoint splits this
+    run covers; `case_count` is the number of cases in *that split only*,
+    never the full question set, so a partial development-only run can
+    never be mistaken for a complete run over every case."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     run_id: str = Field(min_length=1)
     question_set_version: _StrictPositiveInt
+    split: EvaluationSplit
     case_count: _StrictNonNegativeInt
     retrieval_metrics: tuple[RetrieverAggregateMetrics, ...] = Field(
         default_factory=tuple
@@ -440,8 +523,11 @@ class EvaluationSummary(BaseModel):
         return _require_non_blank(value)
 
 
-# Bumped whenever `RunManifest`'s own shape changes incompatibly.
-RUN_MANIFEST_SCHEMA_VERSION = 1
+# Bumped whenever `RunManifest`'s own shape changes incompatibly. Bumped to
+# 2 when the required `split` field was added: a run manifest published
+# before that field existed cannot be interpreted as covering a specific
+# split and must be rejected rather than silently guessed at.
+RUN_MANIFEST_SCHEMA_VERSION = 2
 
 
 class RunManifest(BaseModel):
@@ -452,7 +538,12 @@ class RunManifest(BaseModel):
     identifiers, agent version, relevant library versions, run date, and
     the documented command used. Carries no credential, HTTP header,
     environment value, or provider response object -- only identifiers,
-    versions, and the exact command string."""
+    versions, and the exact command string.
+
+    `split` fixes which of the question set's two disjoint splits this
+    run is scoped to; publication and loading select cases from the
+    reviewed question set by this field, and a retrieval or answer result
+    referencing a case from the other split is rejected."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -468,6 +559,7 @@ class RunManifest(BaseModel):
     max_chars: _StrictPositiveInt
     retrieval_result_limit: _StrictPositiveInt
     question_set_version: _StrictPositiveInt
+    split: EvaluationSplit
     embedding_model: str | None = None
     answering_model: str | None = None
     agent_version: str | None = None

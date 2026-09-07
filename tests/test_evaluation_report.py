@@ -8,7 +8,9 @@ from reporationale.domain.evaluation import (
     CaseRetrievalMetrics,
     EvaluationSummary,
     IndexingMeasurement,
+    MeasurementLimitation,
     PhaseTiming,
+    RetrievalQueryUsage,
     RetrieverAggregateMetrics,
     RunManifest,
     SkippedItem,
@@ -21,7 +23,7 @@ _COMMIT_SHA = "a" * 40
 
 def _manifest() -> RunManifest:
     return RunManifest(
-        run_manifest_schema_version=1,
+        run_manifest_schema_version=2,
         run_id="gson-2026-09-10",
         created_at=datetime(2026, 9, 10, tzinfo=UTC),
         command="uv run python -m reporationale.evaluation gson-2026-09-10",
@@ -33,6 +35,7 @@ def _manifest() -> RunManifest:
         max_chars=2000,
         retrieval_result_limit=5,
         question_set_version=1,
+        split="development",
         embedding_model="voyage-4",
         answering_model="claude-opus-5",
         agent_version="test-agent/1",
@@ -58,10 +61,22 @@ def _indexing() -> IndexingMeasurement:
     )
 
 
+def _query_usage(**overrides: object) -> RetrievalQueryUsage:
+    fields: dict[str, object] = {
+        "query_embedding_request_count": 4,
+        "query_embedding_token_count": 49,
+        "estimated_query_embedding_cost_usd": 0.00000294,
+        "includes_refinement_diagnostic": True,
+    }
+    fields.update(overrides)
+    return RetrievalQueryUsage(**fields)
+
+
 def _summary() -> EvaluationSummary:
     return EvaluationSummary(
         run_id="gson-2026-09-10",
         question_set_version=1,
+        split="development",
         case_count=1,
         retrieval_metrics=(
             RetrieverAggregateMetrics(
@@ -92,11 +107,12 @@ def _summary() -> EvaluationSummary:
 
 def test_report_is_readable_markdown_with_expected_sections() -> None:
     report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), summary=_summary()
+        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
     )
 
     assert report.startswith("# Evaluation run `gson-2026-09-10`")
     assert "## Indexing" in report
+    assert "## Voyage usage" in report
     assert "## Retrieval" in report
     assert "## Answering" in report
     assert "google/gson" in report
@@ -105,23 +121,88 @@ def test_report_is_readable_markdown_with_expected_sections() -> None:
     assert "100.0%" in report  # hit_rate_at_5 formatted as a percentage
     assert "voyage-4" in report
     assert "claude-opus-5" in report
-    assert "Embedding requests: 42" in report
+    assert "Document embedding requests: 42" in report
     assert "Snapshot size: 204800 bytes" in report
     assert "Total phase time: 123.70 s" in report  # 120.5 + 3.2
     assert "0.343" in report  # mean_latency_seconds for the bm25 retriever
+    assert "**Split:** development" in report
     assert report.endswith("\n")
+
+
+def test_report_shows_query_usage_and_combined_voyage_cost() -> None:
+    report = render_markdown_report(
+        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+    )
+
+    assert "Query embedding requests: 4" in report
+    assert "Query embedding tokens: 49" in report
+    assert "Estimated query embedding cost: $0.00000294" in report
+    assert "Query usage includes the refinement diagnostic: yes" in report
+    # document $0.0074 + query $0.00000294 = $0.00740294
+    assert "Combined Voyage list-price cost (document + query): $0.00740294" in report
+
+
+def test_report_shows_query_usage_without_refinement_diagnostic() -> None:
+    report = render_markdown_report(
+        manifest=_manifest(),
+        indexing=_indexing(),
+        query_usage=_query_usage(includes_refinement_diagnostic=False),
+        summary=_summary(),
+    )
+    assert "Query usage includes the refinement diagnostic: no" in report
+
+
+def test_report_shows_measurement_limitations_separately_from_skipped_items() -> None:
+    indexing = IndexingMeasurement(
+        repository=_IDENTITY,
+        resolved_commit_sha=_COMMIT_SHA,
+        github_request_count=750,
+        chunk_count=42,
+        skipped_items=(),
+        measurement_limitations=(
+            MeasurementLimitation(
+                description=(
+                    "Blank-message commits were excluded as non-rationale "
+                    "content during source ingestion, but their exact count "
+                    "and identities cannot be reconstructed from the "
+                    "completed normalized snapshot."
+                )
+            ),
+        ),
+    )
+    report = render_markdown_report(
+        manifest=_manifest(), indexing=indexing, query_usage=_query_usage(), summary=_summary()
+    )
+    assert "Measurement limitations:" in report
+    assert (
+        "Blank-message commits were excluded as non-rationale content "
+        "during source ingestion" in report
+    )
+    assert "Skipped items:" not in report
+
+
+def test_report_omits_measurement_limitations_section_when_none_are_known() -> None:
+    """An empty `measurement_limitations` tuple (no known gap) must not be
+    rendered as if a limitation exists; the section must simply be
+    absent, distinct from ever claiming zero limitations are known."""
+    report = render_markdown_report(
+        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+    )
+    assert "Measurement limitations:" not in report
 
 
 def test_report_handles_missing_answer_metrics() -> None:
     summary = EvaluationSummary(
         run_id="gson-2026-09-10",
         question_set_version=1,
+        split="held_out",
         case_count=1,
         retrieval_metrics=(),
         answer_metrics=None,
     )
     report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), summary=summary
+        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=summary
     )
+    assert "**Split:** held_out" in report
     assert "No retrieval results recorded for this run." in report
     assert "No answer results recorded for this run." in report

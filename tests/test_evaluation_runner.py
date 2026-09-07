@@ -189,6 +189,19 @@ def test_vector_retrieval_refuses_without_explicit_confirmation() -> None:
     assert search_service.calls == []
 
 
+def test_vector_retrieval_rejects_mixed_split_cases_before_any_provider_call() -> None:
+    """A mixed-split case sequence must be rejected before the search
+    service is ever touched -- even when paid mode is confirmed."""
+    search_service = _FakeVectorSearchService({"why?": ()})
+    held_out_case = _answerable_case("case-held", "why?")
+    held_out_case = held_out_case.model_copy(update={"split": "held_out"})
+    cases = (_answerable_case("case-dev"), held_out_case)
+
+    with pytest.raises(ValueError, match="multiple evaluation splits"):
+        run_vector_retrieval(cases, search_service, confirm_paid_mode=True)
+    assert search_service.calls == []
+
+
 def test_vector_retrieval_runs_answerable_cases_when_confirmed() -> None:
     evidence_id = "github:google/gson:issue:1:chunk:0"
     search_service = _FakeVectorSearchService(
@@ -239,6 +252,32 @@ def test_answering_refuses_without_explicit_confirmation() -> None:
             model_factory=model_factory,
             search_history=search,
             confirm_paid_mode=False,
+        )
+    assert calls["count"] == 0
+    assert search.calls == []
+
+
+def test_answering_rejects_mixed_split_cases_before_any_provider_call() -> None:
+    """A mixed-split case sequence must be rejected before `model_factory`
+    or `search_history` is ever touched -- even when paid mode is
+    confirmed."""
+    search = _FakeSearchHistory({})
+    held_out_case = _insufficient_case("case-held").model_copy(
+        update={"split": "held_out"}
+    )
+    cases = (_answerable_case("case-dev"), held_out_case)
+    calls = {"count": 0}
+
+    def model_factory() -> _FakeModel:
+        calls["count"] += 1
+        return _FakeModel([])
+
+    with pytest.raises(ValueError, match="multiple evaluation splits"):
+        run_answering(
+            cases,
+            model_factory=model_factory,
+            search_history=search,
+            confirm_paid_mode=True,
         )
     assert calls["count"] == 0
     assert search.calls == []

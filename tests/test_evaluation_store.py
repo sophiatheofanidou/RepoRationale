@@ -33,14 +33,21 @@ from reporationale.application.evaluation_artifacts import (
 )
 from reporationale.application.evaluation_metrics import build_evaluation_summary
 from reporationale.application.evaluation_report import render_markdown_report
-from reporationale.domain.answering import AnsweredOutcome, Citation, RunTrace
+from reporationale.domain.answering import (
+    AnsweredOutcome,
+    Citation,
+    InsufficientEvidenceOutcome,
+    RunTrace,
+)
 from reporationale.domain.evaluation import (
     AnswerCaseResult,
     EvaluationCase,
     EvaluationQuestionSet,
     ExpectedSource,
     IndexingMeasurement,
+    MeasurementLimitation,
     RetrievalCaseResult,
+    RetrievalQueryUsage,
     RunManifest,
 )
 from reporationale.domain.repository_identity import RepositoryIdentity
@@ -49,7 +56,9 @@ _IDENTITY = RepositoryIdentity(platform="github", owner="google", name="gson")
 _COMMIT_SHA = "a" * 40
 
 
-def _question_set(question_set_version: int = 1) -> EvaluationQuestionSet:
+def _question_set(
+    question_set_version: int = 1, *, include_held_out_case: bool = False
+) -> EvaluationQuestionSet:
     case = EvaluationCase(
         case_id="case-1",
         split="development",
@@ -64,10 +73,21 @@ def _question_set(question_set_version: int = 1) -> EvaluationQuestionSet:
         ),
         review_note="Confirmed against the linked thread.",
     )
+    cases: tuple[EvaluationCase, ...] = (case,)
+    if include_held_out_case:
+        held_out_case = EvaluationCase(
+            case_id="case-2",
+            split="held_out",
+            question="Why was Y changed?",
+            category="unanswerable_control",
+            expected_outcome="insufficient_evidence",
+            review_note="No matching rationale found after a manual search.",
+        )
+        cases = (case, held_out_case)
     return EvaluationQuestionSet(
         question_set_schema_version=1,
         question_set_version=question_set_version,
-        cases=(case,),
+        cases=cases,
     )
 
 
@@ -76,9 +96,10 @@ def _manifest(
     *,
     resolved_commit_sha: str = _COMMIT_SHA,
     question_set_version: int = 1,
+    split: str = "development",
 ) -> RunManifest:
     return RunManifest(
-        run_manifest_schema_version=1,
+        run_manifest_schema_version=2,
         run_id=run_id,
         created_at=datetime(2026, 9, 10, tzinfo=UTC),
         command="uv run python -m reporationale.evaluation " + run_id,
@@ -90,6 +111,7 @@ def _manifest(
         max_chars=2000,
         retrieval_result_limit=5,
         question_set_version=question_set_version,
+        split=split,
     )
 
 
@@ -100,6 +122,17 @@ def _indexing(*, resolved_commit_sha: str = _COMMIT_SHA) -> IndexingMeasurement:
         github_request_count=750,
         chunk_count=10,
     )
+
+
+def _query_usage(**overrides: object) -> RetrievalQueryUsage:
+    fields: dict[str, object] = {
+        "query_embedding_request_count": 0,
+        "query_embedding_token_count": 0,
+        "estimated_query_embedding_cost_usd": None,
+        "includes_refinement_diagnostic": False,
+    }
+    fields.update(overrides)
+    return RetrievalQueryUsage(**fields)
 
 
 def _retrieval_results() -> tuple[RetrievalCaseResult, ...]:
@@ -150,6 +183,7 @@ def _publish(root: Path, run_id: str = "gson-2026-09-10", **overrides: object) -
         "run_id": run_id,
         "manifest": _manifest(run_id),
         "indexing": _indexing(),
+        "query_usage": _query_usage(),
         "question_set": _question_set(),
         "retrieval_results": _retrieval_results(),
         "answer_results": _answer_results(),
@@ -255,6 +289,7 @@ def test_publish_and_load_evaluation_run_round_trip(tmp_path: Path) -> None:
     for filename in (
         "run-manifest.json",
         "indexing.json",
+        "query-usage.json",
         "retrieval-results.jsonl",
         "answer-results.jsonl",
         "summary.json",
@@ -266,6 +301,7 @@ def test_publish_and_load_evaluation_run_round_trip(tmp_path: Path) -> None:
     loaded = load_evaluation_run(target, question_set=question_set)
     assert loaded.manifest == _manifest()
     assert loaded.indexing == _indexing()
+    assert loaded.query_usage == _query_usage()
     assert loaded.retrieval_results == _retrieval_results()
     assert loaded.answer_results == _answer_results()
 
@@ -275,12 +311,16 @@ def test_publish_and_load_evaluation_run_round_trip(tmp_path: Path) -> None:
     expected_summary = build_evaluation_summary(
         run_id="gson-2026-09-10",
         question_set=question_set,
+        split="development",
         retrieval_results=_retrieval_results(),
         answer_results=_answer_results(),
     )
     assert loaded.summary == expected_summary
     expected_report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), summary=expected_summary
+        manifest=_manifest(),
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        summary=expected_summary,
     )
     assert loaded.report_markdown == expected_report
 
@@ -330,6 +370,273 @@ def test_load_evaluation_run_rejects_question_set_missing_referenced_case(
     )
     with pytest.raises(EvaluationRunCorrupted, match="do not match"):
         load_evaluation_run(target, question_set=other_question_set)
+
+
+# --- retrieval-query usage and measurement limitations ------------------------
+
+
+def test_publish_and_load_round_trip_persists_query_usage(tmp_path: Path) -> None:
+    """Query-embedding usage is its own persisted raw artifact and must
+    reload exactly as published, with the report rendering it from that
+    raw source rather than from any other total."""
+    query_usage = _query_usage(
+        query_embedding_request_count=4,
+        query_embedding_token_count=49,
+        estimated_query_embedding_cost_usd=0.00000294,
+        includes_refinement_diagnostic=True,
+    )
+    target = _publish(tmp_path, query_usage=query_usage)
+
+    assert (target / "query-usage.json").is_file()
+    loaded = load_evaluation_run(target, question_set=_question_set())
+    assert loaded.query_usage == query_usage
+    assert "Query embedding requests: 4" in loaded.report_markdown
+    assert "Query embedding tokens: 49" in loaded.report_markdown
+    assert "Query usage includes the refinement diagnostic: yes" in loaded.report_markdown
+
+
+def test_publish_and_load_round_trip_persists_measurement_limitations(
+    tmp_path: Path,
+) -> None:
+    limitation_text = (
+        "Blank-message commits were excluded as non-rationale content "
+        "during source ingestion, but their exact count and identities "
+        "cannot be reconstructed from the completed normalized snapshot."
+    )
+    indexing = _indexing().model_copy(
+        update={
+            "measurement_limitations": (
+                MeasurementLimitation(description=limitation_text),
+            )
+        }
+    )
+    target = _publish(tmp_path, indexing=indexing)
+
+    loaded = load_evaluation_run(target, question_set=_question_set())
+    assert len(loaded.indexing.measurement_limitations) == 1
+    assert loaded.indexing.measurement_limitations[0].description == limitation_text
+    assert limitation_text in loaded.report_markdown
+    assert "Skipped items:" not in loaded.report_markdown
+
+
+def test_publish_rejects_query_usage_below_vector_retrieval_count(
+    tmp_path: Path,
+) -> None:
+    """A `RetrievalQueryUsage` record that understates the query calls its
+    own run's vector-retrieval results required must be rejected before
+    publication -- usage totals are cross-validated wherever applicable,
+    never accepted as an independent, unsupported summary."""
+    vector_results = (
+        RetrievalCaseResult(
+            case_id="case-1",
+            retriever="voyage_chroma",
+            retrieved_source_ids=("github:google/gson:issue:1",),
+            latency_seconds=0.4,
+        ),
+    )
+    understated_usage = _query_usage(query_embedding_request_count=0)
+    with pytest.raises(ValueError, match="less than the minimum implied"):
+        _publish(
+            tmp_path,
+            retrieval_results=vector_results,
+            query_usage=understated_usage,
+        )
+
+
+def test_publish_accepts_query_usage_covering_vector_retrieval_and_refinement(
+    tmp_path: Path,
+) -> None:
+    vector_results = (
+        RetrievalCaseResult(
+            case_id="case-1",
+            retriever="voyage_chroma",
+            retrieved_source_ids=("github:google/gson:issue:1",),
+            latency_seconds=0.4,
+        ),
+    )
+    usage = _query_usage(
+        query_embedding_request_count=2,
+        query_embedding_token_count=20,
+        includes_refinement_diagnostic=True,
+    )
+    target = _publish(tmp_path, retrieval_results=vector_results, query_usage=usage)
+    loaded = load_evaluation_run(target, question_set=_question_set())
+    assert loaded.query_usage.query_embedding_request_count == 2
+
+
+def test_load_evaluation_run_rejects_query_usage_tampered_after_publish(
+    tmp_path: Path,
+) -> None:
+    """Tampering with the persisted `query-usage.json` after publication
+    must be caught on reload -- the recomputed report reflects the
+    tampered usage and therefore no longer matches the persisted report."""
+    target = _publish(tmp_path)
+    _rewrite_json_file(
+        target / "query-usage.json",
+        lambda data: data.__setitem__("query_embedding_request_count", 99),
+    )
+    with pytest.raises(EvaluationRunCorrupted):
+        load_evaluation_run(target, question_set=_question_set())
+
+
+# --- split-aware publication and loading -------------------------------------
+
+
+def test_publish_and_load_evaluation_run_for_held_out_split(tmp_path: Path) -> None:
+    """A held-out-split run publishes and reloads with its own manifest
+    split and its own (not the whole question set's) case count."""
+    question_set = _question_set(include_held_out_case=True)
+    manifest = _manifest(split="held_out")
+    retrieval_results: tuple[RetrievalCaseResult, ...] = ()
+    answer_results = (
+        AnswerCaseResult(
+            case_id="case-2",
+            outcome=InsufficientEvidenceOutcome(explanation="No documented rationale."),
+            trace=_trace(),
+        ),
+    )
+
+    target = publish_evaluation_run(
+        root=tmp_path,
+        run_id=manifest.run_id,
+        manifest=manifest,
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        question_set=question_set,
+        retrieval_results=retrieval_results,
+        answer_results=answer_results,
+    )
+
+    loaded = load_evaluation_run(target, question_set=question_set)
+    assert loaded.manifest.split == "held_out"
+    assert loaded.summary.split == "held_out"
+    assert loaded.summary.case_count == 1
+    assert "**Split:** held_out" in loaded.report_markdown
+
+
+def test_publish_rejects_retrieval_result_from_other_split(tmp_path: Path) -> None:
+    """A retrieval result for a case belonging to the other split must be
+    rejected before publication, not silently accepted into a
+    development-scoped run."""
+    question_set = _question_set(include_held_out_case=True)
+    cross_split_result = (
+        RetrievalCaseResult(
+            case_id="case-2",
+            retriever="bm25",
+            retrieved_source_ids=(),
+            latency_seconds=0.0,
+        ),
+    )
+    with pytest.raises(ValueError, match="belongs to split 'held_out'"):
+        _publish(
+            tmp_path,
+            question_set=question_set,
+            retrieval_results=_retrieval_results() + cross_split_result,
+        )
+
+
+def test_publish_rejects_answer_result_from_other_split(tmp_path: Path) -> None:
+    question_set = _question_set(include_held_out_case=True)
+    cross_split_answer = (
+        AnswerCaseResult(
+            case_id="case-2",
+            outcome=InsufficientEvidenceOutcome(explanation="No documented rationale."),
+            trace=_trace(),
+        ),
+    )
+    with pytest.raises(ValueError, match="belongs to split 'held_out'"):
+        _publish(
+            tmp_path,
+            question_set=question_set,
+            answer_results=_answer_results() + cross_split_answer,
+        )
+
+
+def test_publish_rejects_incomplete_retriever_coverage_of_the_selected_split(
+    tmp_path: Path,
+) -> None:
+    """A retrieval-only run must supply exactly one result per retriever
+    for every answerable case in the selected split; a still-partial
+    development run must never be publishable as complete."""
+    question_set = EvaluationQuestionSet(
+        question_set_schema_version=1,
+        question_set_version=1,
+        cases=(
+            EvaluationCase(
+                case_id="case-1",
+                split="development",
+                question="Why was X changed?",
+                category="direct_retrieval",
+                expected_outcome="answered",
+                expected_sources=(
+                    ExpectedSource(
+                        source_id="github:google/gson:issue:1",
+                        source_url="https://github.com/google/gson/issues/1",
+                    ),
+                ),
+                review_note="Confirmed against the linked thread.",
+            ),
+            EvaluationCase(
+                case_id="case-3",
+                split="development",
+                question="Why was Z changed?",
+                category="direct_retrieval",
+                expected_outcome="answered",
+                expected_sources=(
+                    ExpectedSource(
+                        source_id="github:google/gson:issue:3",
+                        source_url="https://github.com/google/gson/issues/3",
+                    ),
+                ),
+                review_note="Confirmed against the linked thread.",
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="does not have exactly one result"):
+        _publish(
+            tmp_path,
+            question_set=question_set,
+            retrieval_results=_retrieval_results(),
+            answer_results=(),
+        )
+
+
+def test_publish_rejects_incomplete_answer_coverage_of_the_selected_split(
+    tmp_path: Path,
+) -> None:
+    """When answer results are present at all, they must cover every case
+    in the selected split, including insufficient-evidence controls."""
+    question_set = _question_set(include_held_out_case=False)
+    question_set = question_set.model_copy(
+        update={
+            "cases": (
+                *question_set.cases,
+                EvaluationCase(
+                    case_id="case-3",
+                    split="development",
+                    question="Was this ever discussed?",
+                    category="unanswerable_control",
+                    expected_outcome="insufficient_evidence",
+                    review_note="No matching decision found.",
+                ),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="do not cover every case in split"):
+        _publish(
+            tmp_path,
+            question_set=question_set,
+            answer_results=_answer_results(),
+        )
+
+
+def test_publish_rejects_manifest_schema_version_1(tmp_path: Path) -> None:
+    """`RUN_MANIFEST_SCHEMA_VERSION` was bumped to 2 for the required
+    `split` field; the old value of 1 must be rejected outright rather
+    than accepted as if `split` were optional."""
+    bad_manifest = _manifest().model_copy(update={"run_manifest_schema_version": 1})
+    with pytest.raises(ValueError, match="run_manifest_schema_version"):
+        _publish(tmp_path, manifest=bad_manifest)
 
 
 # --- already-exists / forced replacement -------------------------------------
@@ -466,6 +773,8 @@ def test_failed_forced_replacement_preserves_previous_run(tmp_path: Path) -> Non
     ("corrupt", "expected_error"),
     [
         ("missing_manifest", EvaluationRunNotFound),
+        ("missing_query_usage", EvaluationRunNotFound),
+        ("bad_json_query_usage", EvaluationRunCorrupted),
         ("bad_json_manifest", EvaluationRunCorrupted),
         ("unsupported_manifest_schema_version", EvaluationRunIncompatible),
         ("blank_line_in_retrieval", EvaluationRunCorrupted),
@@ -476,6 +785,8 @@ def test_failed_forced_replacement_preserves_previous_run(tmp_path: Path) -> Non
         ("summary_run_id_mismatch", EvaluationRunCorrupted),
         ("summary_tampered", EvaluationRunCorrupted),
         ("report_tampered", EvaluationRunCorrupted),
+        ("manifest_split_mismatch_with_summary", EvaluationRunCorrupted),
+        ("legacy_v1_manifest_missing_split", EvaluationRunCorrupted),
     ],
 )
 def test_load_evaluation_run_rejects_corrupt_variants(
@@ -485,6 +796,10 @@ def test_load_evaluation_run_rejects_corrupt_variants(
 
     if corrupt == "missing_manifest":
         (target / "run-manifest.json").unlink()
+    elif corrupt == "missing_query_usage":
+        (target / "query-usage.json").unlink()
+    elif corrupt == "bad_json_query_usage":
+        (target / "query-usage.json").write_text("not json", encoding="utf-8")
     elif corrupt == "bad_json_manifest":
         (target / "run-manifest.json").write_text("not json", encoding="utf-8")
     elif corrupt == "unsupported_manifest_schema_version":
@@ -521,6 +836,18 @@ def test_load_evaluation_run_rejects_corrupt_variants(
         _rewrite_json_file(
             target / "summary.json", lambda data: data.__setitem__("case_count", 2)
         )
+    elif corrupt == "manifest_split_mismatch_with_summary":
+        _rewrite_json_file(
+            target / "run-manifest.json",
+            lambda data: data.__setitem__("split", "held_out"),
+        )
+    elif corrupt == "legacy_v1_manifest_missing_split":
+
+        def _strip_split(data: dict[str, object]) -> None:
+            data.pop("split", None)
+            data["run_manifest_schema_version"] = 1
+
+        _rewrite_json_file(target / "run-manifest.json", _strip_split)
     elif corrupt == "report_tampered":
         path = target / "report.md"
         path.write_text(

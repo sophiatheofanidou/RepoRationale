@@ -22,6 +22,7 @@ from reporationale.domain.evaluation import (
     CaseRetrievalMetrics,
     EvaluationCase,
     EvaluationQuestionSet,
+    EvaluationSplit,
     EvaluationSummary,
     RetrievalCaseResult,
     RetrieverAggregateMetrics,
@@ -86,17 +87,29 @@ def compute_case_retrieval_metrics(
 def compute_retriever_aggregate_metrics(
     question_set: EvaluationQuestionSet,
     retrieval_results: Sequence[RetrievalCaseResult],
+    *,
+    split: EvaluationSplit,
 ) -> tuple[RetrieverAggregateMetrics, ...]:
     """Group `retrieval_results` by retriever and compute each retriever's
     aggregate Hit@5/MRR@5/source-Recall@5 across its own recorded cases,
-    ordered deterministically by retriever name.
+    ordered deterministically by retriever name. Every result is judged
+    against `split`: a retrieval result for a case belonging to the other
+    split is rejected outright rather than silently scored or ignored, and
+    every retriever that appears at all in `retrieval_results` must supply
+    exactly one result for every `answered` case in `split` -- no more, no
+    fewer.
 
     Raises `ValueError` for a result referencing a case_id absent from
-    `question_set`, a result for a case whose `expected_outcome` is not
-    `answered` (retrieval metrics are only defined for answerable
-    questions), or a repeated `(case_id, retriever)` pair.
+    `question_set`, a result for a case belonging to a split other than
+    `split`, a retriever whose results do not exactly cover every
+    answerable case in `split`, or a repeated `(case_id, retriever)` pair.
     """
     cases_by_id = {case.case_id: case for case in question_set.cases}
+    answerable_case_ids_in_split = {
+        case.case_id
+        for case in question_set.cases
+        if case.split == split and case.expected_outcome == "answered"
+    }
     grouped: dict[str, list[RetrievalCaseResult]] = {}
     seen_pairs: set[tuple[str, str]] = set()
 
@@ -105,6 +118,11 @@ def compute_retriever_aggregate_metrics(
         if case is None:
             raise ValueError(
                 f"retrieval result references unknown case_id {result.case_id!r}"
+            )
+        if case.split != split:
+            raise ValueError(
+                f"retrieval result for case_id {result.case_id!r} belongs to "
+                f"split {case.split!r}, not the selected split {split!r}"
             )
         pair = (result.case_id, result.retriever)
         if pair in seen_pairs:
@@ -118,6 +136,15 @@ def compute_retriever_aggregate_metrics(
     aggregates: list[RetrieverAggregateMetrics] = []
     for retriever in sorted(grouped):
         results = grouped[retriever]
+        result_case_ids = {result.case_id for result in results}
+        if result_case_ids != answerable_case_ids_in_split:
+            missing = sorted(answerable_case_ids_in_split - result_case_ids)
+            extra = sorted(result_case_ids - answerable_case_ids_in_split)
+            raise ValueError(
+                f"retriever {retriever!r} does not have exactly one result "
+                f"for every answerable case in split {split!r} "
+                f"(missing={missing}, extra={extra})"
+            )
         per_case = tuple(
             compute_case_retrieval_metrics(cases_by_id[result.case_id], result)
             for result in results
@@ -152,15 +179,25 @@ def compute_retriever_aggregate_metrics(
 def compute_answer_aggregate_metrics(
     question_set: EvaluationQuestionSet,
     answer_results: Sequence[AnswerCaseResult],
+    *,
+    split: EvaluationSplit,
 ) -> AnswerAggregateMetrics:
     """Outcome accuracy, token/cost totals, mean latency, and failure-stage
     counts across `answer_results`, judged against each case's own
-    `expected_outcome`.
+    `expected_outcome`. Every result is judged against `split`: a result
+    for a case belonging to the other split is rejected outright, and
+    `answer_results` must supply exactly one result for every case in
+    `split` -- both `answered` and `insufficient_evidence` controls --
+    whenever this function is called at all (an entirely retrieval-only
+    run never calls it; see `build_evaluation_summary`).
 
     Raises `ValueError` for a result referencing a case_id absent from
-    `question_set` or a repeated case_id.
+    `question_set`, a result for a case belonging to a split other than
+    `split`, a repeated case_id, or a set of results that does not exactly
+    cover every case in `split`.
     """
     cases_by_id = {case.case_id: case for case in question_set.cases}
+    split_case_ids = {case.case_id for case in question_set.cases if case.split == split}
     seen_case_ids: set[str] = set()
 
     correct = 0
@@ -176,6 +213,11 @@ def compute_answer_aggregate_metrics(
         if case is None:
             raise ValueError(
                 f"answer result references unknown case_id {result.case_id!r}"
+            )
+        if case.split != split:
+            raise ValueError(
+                f"answer result for case_id {result.case_id!r} belongs to "
+                f"split {case.split!r}, not the selected split {split!r}"
             )
         if result.case_id in seen_case_ids:
             raise ValueError(f"duplicate answer result for case_id {result.case_id!r}")
@@ -195,6 +237,13 @@ def compute_answer_aggregate_metrics(
                 failure_stage_counts.get(failure_stage, 0) + 1
             )
 
+    if seen_case_ids != split_case_ids:
+        missing = sorted(split_case_ids - seen_case_ids)
+        raise ValueError(
+            f"answer results do not cover every case in split {split!r} "
+            f"(missing={missing})"
+        )
+
     case_count = len(answer_results)
     return AnswerAggregateMetrics(
         case_count=case_count,
@@ -211,24 +260,36 @@ def build_evaluation_summary(
     *,
     run_id: str,
     question_set: EvaluationQuestionSet,
+    split: EvaluationSplit,
     retrieval_results: Sequence[RetrievalCaseResult],
     answer_results: Sequence[AnswerCaseResult],
 ) -> EvaluationSummary:
     """Build the complete `EvaluationSummary` for one run from its raw
-    case-level retrieval and answer results. `answer_metrics` stays `None`
-    when `answer_results` is empty (a retrieval-only run)."""
+    case-level retrieval and answer results, scoped to `split`.
+    `case_count` is the number of cases in `split` only -- never the full
+    question set -- so a development-only run can never report the
+    complete question set's case count. `answer_metrics` stays `None` when
+    `answer_results` is empty (a retrieval-only run).
+
+    Raises `ValueError` if `question_set` has no case belonging to
+    `split`.
+    """
+    split_case_count = sum(1 for case in question_set.cases if case.split == split)
+    if split_case_count == 0:
+        raise ValueError(f"the question set has no cases for split {split!r}")
     retrieval_metrics = compute_retriever_aggregate_metrics(
-        question_set, retrieval_results
+        question_set, retrieval_results, split=split
     )
     answer_metrics = (
-        compute_answer_aggregate_metrics(question_set, answer_results)
+        compute_answer_aggregate_metrics(question_set, answer_results, split=split)
         if answer_results
         else None
     )
     return EvaluationSummary(
         run_id=run_id,
         question_set_version=question_set.question_set_version,
-        case_count=len(question_set.cases),
+        split=split,
+        case_count=split_case_count,
         retrieval_metrics=retrieval_metrics,
         answer_metrics=answer_metrics,
     )

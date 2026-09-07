@@ -158,6 +158,47 @@ control was not retrieval-scored, and no held-out question was queried. This
 establishes concrete misses for the Voyage comparison without changing their
 ground truth after observation.
 
+### Gson development Voyage/Chroma comparison
+
+The pinned Gson snapshot produced 17,479 chunks at the selected 2,000-character
+maximum. Building and validating its reusable Voyage 4/Chroma index required
+137 document-embedding requests, accepted 2,965,021 tokens, and took about
+248.3 seconds including index publication and validation. Reopening the
+completed index took about 2.6 seconds and made no document-embedding request.
+The vector index occupied 201,309,469 bytes; the source, chunk, and vector
+artifacts occupied 243,836,197 bytes together.
+
+At a recorded standard list price of `$0.06` per million tokens on 2026-09-07,
+the document embeddings had a `$0.17790126` list-price equivalent. The three
+first-search development queries and one separately labelled refinement
+diagnostic used four query requests and 49 tokens, adding `$0.00000294`; the
+combined Voyage list-price equivalent was `$0.17790420`. This is a cost
+estimate, not a claim about whether the provider charged the account after any
+free allowance.
+
+The three answerable development cases were run once through each persisted
+retrieval path at the fixed top-five limit. The insufficient-evidence control
+was retained in the split's four-case count but was not retrieval-scored.
+
+| Retriever | Hit@5 | MRR@5 | Mean latency |
+| --- | ---: | ---: | ---: |
+| BM25 | 1/3 | 0.333 | 0.070 s |
+| Voyage/Chroma | 2/3 | 0.444 | 0.440 s |
+
+Voyage preserved the design-document hit at rank one and recovered the
+issue-comment rationale at rank three, which BM25 missed. Both retrievers
+missed the semantic-reword case. The fixed refinement diagnostic did not bring
+that case's predeclared exact source into the top five, so it remains a miss
+rather than being re-labelled after observation. No held-out question and no
+answering model was called in this run.
+
+The run is scoped explicitly to the development split and reloads through the
+semantic artifact validator with four split cases, six retrieval records, and
+zero answer records. Its indexing record also discloses that blank-message
+commits were excluded as non-rationale content but that their exact count and
+identities cannot be reconstructed from the completed normalized snapshot.
+This is a measurement limitation, not an assertion that no item was skipped.
+
 ### Development chunk-size calibration
 
 Chunk size was calibrated offline against completed normalized
@@ -656,20 +697,24 @@ private local storage; aggregate findings are added to this document so they
 can be reviewed without reading raw files.
 
 The offline artifact foundation now validates the question-set and run schemas,
-computes aggregates only from raw case records, and publishes six local files
-atomically: `run-manifest.json`, `indexing.json`,
+computes aggregates only from raw case records, and publishes seven local files
+atomically: `run-manifest.json`, `indexing.json`, `query-usage.json`,
 `retrieval-results.jsonl`, `answer-results.jsonl`, `summary.json`, and
-`report.md`. Loading a run with its reviewed question set recomputes the
-summary and report and rejects cross-artifact disagreement. Live workflow
-integration now has a thin raw-result runner with an explicit paid-mode gate.
-The next contract correction is to record and enforce the selected development
-or held-out split in each published run; until then, development pilots remain
-clearly labelled private pilot artifacts rather than complete evaluation runs.
+`report.md`. Query embeddings remain separate from document-embedding
+measurements, and unquantifiable measurement gaps remain separate from
+identified skipped items. Each manifest selects one development or held-out
+split. Loading a run with its reviewed question set recomputes the summary and
+report and rejects split leakage, cross-artifact disagreement, and applicable
+query-request totals that are lower than the raw vector results imply. Live
+workflow integration has a thin raw-result runner with explicit paid-mode
+gates; the retained private Gson runner can validate and republish offline,
+reuse a compatible index, and refuses a new paid build or query without its
+specific confirmation flag.
 
 ### Visual evidence to add later
 
-No screenshots, charts, or results exist yet. Once the system is implemented,
-the most useful visuals will be:
+No evaluation visual has been added yet. The recorded numeric results above
+remain the source for later generated charts. The most useful visuals will be:
 
 | Visual | What it demonstrates |
 | --- | --- |

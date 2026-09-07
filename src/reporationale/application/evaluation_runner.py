@@ -23,11 +23,13 @@ and answering-model instance is injected by the caller as an already-built
 object satisfying a narrow structural `Protocol`, so a real paid call can
 never happen here merely because a credential happens to be configured
 somewhere. The two paid modes additionally refuse to run at all unless the
-caller explicitly passes `confirm_paid_mode=True`, checked before anything
-else executes. Every mode runs its cases strictly sequentially, exactly
-once each, with no retry of any kind: a failed call propagates immediately
-and an unfavorable outcome is recorded as-is, never silently replaced by a
-repeated attempt.
+caller explicitly passes `confirm_paid_mode=True`, and reject a `cases`
+sequence spanning more than one evaluation split -- both checked before
+anything else executes, including before either a model or a search/
+embedding provider is ever touched. Every mode runs its cases strictly
+sequentially, exactly once each, with no retry of any kind: a failed call
+propagates immediately and an unfavorable outcome is recorded as-is, never
+silently replaced by a repeated attempt.
 """
 
 import time
@@ -48,6 +50,14 @@ from reporationale.domain.evaluation import (
 from reporationale.domain.retrieval import RankedEvidence
 
 Clock = Callable[[], float]
+
+# The product's vector-retrieval path's well-known retriever name, used as
+# `run_vector_retrieval`'s default and referenced by
+# `reporationale.application.evaluation_artifacts` to cross-validate a raw
+# `RetrievalQueryUsage` record against retrieval results carrying this
+# retriever name. A caller may still pass a different `retriever_name`; the
+# cross-validation simply does not apply to results under a different name.
+DEFAULT_VECTOR_RETRIEVER_NAME = "voyage_chroma"
 
 
 class PaidModeNotConfirmed(Exception):
@@ -72,6 +82,22 @@ class VectorSearchService(Protocol):
     by any fake test double."""
 
     def search_history(self, query: str) -> tuple[RankedEvidence, ...]: ...
+
+
+def _require_single_split(cases: Sequence[EvaluationCase]) -> None:
+    """Raise `ValueError` if `cases` spans more than one evaluation split,
+    before anything else in a paid mode runs: a paid retrieval or
+    answering call must be scoped to exactly one split, so a caller
+    mistake can never mix development and held-out cases into the same
+    run. Always checked before `model_factory`, `search_service`, or
+    `search_history` is ever touched."""
+    splits = {case.split for case in cases}
+    if len(splits) > 1:
+        raise ValueError(
+            "cases span multiple evaluation splits "
+            f"({sorted(splits)}); a paid retrieval or answering run must "
+            "be scoped to a single split before any provider is called"
+        )
 
 
 def _answerable_cases(cases: Sequence[EvaluationCase]) -> tuple[EvaluationCase, ...]:
@@ -138,17 +164,20 @@ def run_vector_retrieval(
     search_service: VectorSearchService,
     *,
     confirm_paid_mode: bool,
-    retriever_name: str = "voyage_chroma",
+    retriever_name: str = DEFAULT_VECTOR_RETRIEVER_NAME,
     clock: Clock = time.monotonic,
 ) -> tuple[RetrievalCaseResult, ...]:
     """Run the paid Voyage/Chroma product retrieval path over every
     answerable case in `cases`, once each, in question-set order.
 
-    Raises `PaidModeNotConfirmed` before calling `search_service` at all
-    unless the caller explicitly passes `confirm_paid_mode=True`. A case
-    whose `expected_outcome` is `insufficient_evidence` is skipped, for the
-    same reason as `run_offline_lexical_retrieval`.
+    Raises `ValueError` before calling `search_service` at all if `cases`
+    spans more than one evaluation split. Raises `PaidModeNotConfirmed`
+    before calling `search_service` at all unless the caller explicitly
+    passes `confirm_paid_mode=True`. A case whose `expected_outcome` is
+    `insufficient_evidence` is skipped, for the same reason as
+    `run_offline_lexical_retrieval`.
     """
+    _require_single_split(cases)
     if not confirm_paid_mode:
         raise PaidModeNotConfirmed(
             "run_vector_retrieval makes one paid Voyage query-embedding "
@@ -192,13 +221,16 @@ def run_answering(
     same `search_history` capability is reused across cases, matching how
     the product's `SearchHistoryService` is itself designed to be reused.
 
-    Raises `PaidModeNotConfirmed` before calling `model_factory` or
+    Raises `ValueError` before calling `model_factory` or `search_history`
+    at all if `cases` spans more than one evaluation split. Raises
+    `PaidModeNotConfirmed` before calling `model_factory` or
     `search_history` at all unless the caller explicitly passes
     `confirm_paid_mode=True`. Every case runs exactly once: a raised
     provider or protocol error propagates immediately and stops the run
     rather than being caught, retried, or replaced with a more favorable
     attempt; ground truth (`cases`) is never read back or mutated.
     """
+    _require_single_split(cases)
     if not confirm_paid_mode:
         raise PaidModeNotConfirmed(
             "run_answering makes paid Anthropic calls (and, through "

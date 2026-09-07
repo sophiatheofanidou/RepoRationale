@@ -1,8 +1,8 @@
 # RepoRationale — Implementation Plan and Current State
 
 **Project state:** Implementation  
-**Current milestone:** M4 — Bounded agentic RAG
-**Last updated:** 2026-09-06
+**Current milestone:** M5 — Evaluation
+**Last updated:** 2026-09-07
 
 This document is the source of truth for current progress, the active
 milestone, and the next implementation steps. It is not a detailed activity log
@@ -10,39 +10,52 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Create the reviewed answering-agent checkpoint
+**Active task:** Prepare for M5 evaluation-corpus and question-set work
 **Task status:** Ready
-**Last completed work:** The first bounded answering-agent slice is accepted.
-It adds provider-independent answer, citation, action, and trace contracts; a
-plain Python loop with `search_history` as its only capability and a fixed
-three-call limit; an Anthropic Messages API adapter with a maintainer-supplied
-model identifier; deterministic in-run citation resolution and marker
-validation; explicit insufficient-evidence behaviour; and the compact
-in-memory trace required by later evaluation.
-**Verification performed:** Codex independently reviewed the implementation,
-the initial six focused tests, and the correction for citation-marker and final
-insufficient-trace handling. It reran the seven focused answering tests, Ruff
-lint and formatting checks, mypy, the complete test suite, `git diff --check`,
-and the repository tracking-identifier check. All checks passed: mypy reported
-no issues in 67 source files and pytest reported 515 passing tests. The only
-additional output was the existing Chroma deprecation warning, line-ending
-notices, and sandbox-local pytest cache warning. No live API request was used.
-**Known limitations or deviations:** The exact Claude model is intentionally
-unselected, and the strict provider response format has been exercised only
-with fake responses. No live answer-quality, tool-use reliability, latency, or
-cost comparison has run. Run traces remain in memory, and no user interface or
-final evaluation harness exists.
-**Open questions or blockers:** None. The accepted slice is awaiting its
-user-approved Git checkpoint before the separate live model-comparison slice.
-**Next action:** The user approves or revises the proposed answering-agent
-checkpoint; after approval, Codex verifies the repository-local Git identity
-and creates only that commit before planning the bounded live Claude-model
-comparison.
+**Last completed work:** M4 is complete. The fixed 12-run Haiku/Sonnet/Opus
+development comparison ran to completion after the structural tool-calling
+fix recorded in D-004 (forced `tool_choice` on every turn,
+`search_history`/`refine_search` split, extended thinking disabled). Its raw
+traces remain private local artifacts and its aggregate results are recorded
+in `evaluation.md`.
+All 12 runs completed using 36 Anthropic calls for a total estimated cost of
+`$0.32678`, with no provider, credential, or network failure. Claude Haiku
+4.5 and Claude Opus 5 passed every hard structural and grounding requirement;
+Claude Sonnet 5 failed two of the four cases, both correctly rejected by the
+existing citation and provenance validators. `claude-opus-5` was selected as
+the MVP answering model because it was the only candidate that also matched
+the predeclared expected outcome and evidence on all four cases; Claude
+Haiku 4.5 is recorded as a strong, cheaper alternative that matched three of
+the four. Full results are recorded in `evaluation.md`; the selection and its
+reasoning are recorded in `decisions.md` (D-015). Verification and
+consequences of the earlier D-004 tool-calling fix are also now recorded as
+confirmed rather than pending.
+**Verification performed:** The full test suite (532 tests), the focused
+Anthropic-adapter and answering-workflow tests (24 tests, including 18 in
+`test_anthropic_answering.py`), Ruff lint and format checks, and mypy all
+passed against the corrective adapter and test changes. No further live
+Anthropic or Voyage call was made while finalizing this documentation.
+**Known limitations or deviations:** The final comparison is one run per case
+across four development cases selected for chunk and tool-contract
+calibration, not the held-out evaluation corpus; Claude API responses are
+expected to vary run to run. The measured latency differences do not show
+that Claude Opus 5 is generally faster than the other candidates. No
+production composition root yet sets a default Claude model; the answering
+adapter continues to require the model identifier as a configuration
+argument, per D-015's consequences. No user interface or final evaluation
+harness exists yet.
+**Open questions or blockers:** None blocking. The M5 evaluation corpus,
+held-out question set, and final evaluation harness remain to be designed
+against the shortlisted candidates in D-026, per D-017's deferral.
+**Next action:** Begin M5 by reviewing the D-026 shortlist against the
+measured ingestion limits (D-028) to select the held-out evaluation
+repository or repositories, without starting corpus indexing, question-set
+authoring, or the evaluation harness itself yet.
 
-The project now has tested, repeatable ingestion and retrieval foundations plus
-an offline-tested bounded answering path. The completed retrieval work derives
-its artifacts from the canonical local corpus without reopening the GitHub
-ingestion scope.
+The project now has tested, repeatable ingestion, retrieval, and bounded
+agentic-answering foundations, including a completed and recorded Claude
+model selection. The completed work derives its artifacts from the canonical
+local corpus without reopening the GitHub ingestion scope.
 
 Agreed product boundaries are recorded in `project.md`. Accepted and proposed
 choices are recorded in `decisions.md`. The original draft remains reference
@@ -52,19 +65,23 @@ Python (D-008), Chroma for MVP vector storage (D-009), and a project-owned agent
 loop without a large orchestration framework (D-010) are accepted. Streamlit is
 the only MVP user-facing interface (D-013). PostgreSQL/pgvector is the first
 planned post-MVP improvement (D-014), not an MVP requirement. Anthropic Claude
-is the generation provider, with the exact model deferred to a bounded
-project-specific comparison (D-015), and Voyage 4 is the embedding model
-(D-016). Repository onboarding is bounded and self-service (D-018), accepted
-repositories are indexed across their complete supported corpus (D-019), local
-snapshots are persisted and reused (D-020), and embeddings are created per
-source-aware chunk (D-021). Users supply their own external-service credentials
-(D-022). Final evaluation-corpus selection remains deferred to M5 (D-017).
+is the generation provider, with `claude-opus-5` selected as the MVP model
+through a bounded project-specific comparison (D-015), and Voyage 4 is the
+embedding model (D-016). Repository onboarding is bounded and self-service
+(D-018), accepted repositories are indexed across their complete supported
+corpus (D-019), local snapshots are persisted and reused (D-020), and
+embeddings are created per source-aware chunk (D-021). Users supply their own
+external-service credentials (D-022). Final evaluation-corpus selection
+remains deferred to M5 (D-017).
 
 ## 2. Immediate next steps
 
-1. Create the accepted answering-agent checkpoint after explicit user approval.
-2. Plan the separate bounded live comparison that selects the exact Claude
-   model without adding UI or the final evaluation harness.
+1. Review the D-026 shortlist and the measured ingestion limits in D-028 to
+   select the M5 held-out evaluation repository or repositories.
+2. Size and author the reviewed held-out question set only after corpus
+   selection, per D-017.
+3. Design the M5 evaluation harness (retrieval metrics, answer and grounding
+   review, latency/cost reporting) before running it against live data.
 
 ## 3. Milestones
 
@@ -179,6 +196,8 @@ Exit criteria:
 
 ### M4 — Bounded agentic RAG
 
+**Status:** Complete
+
 **Goal:** Produce grounded answers through a small observable tool-calling loop.
 
 Deliverables:
@@ -199,6 +218,19 @@ Exit criteria:
 - it can perform a useful second retrieval on at least one defined test case;
 - citations refer only to evidence returned during the current run;
 - unanswerable seed questions produce the expected abstention behaviour.
+
+Exit-criteria verification: the first turn is always forced to
+`search_history`, so the agent cannot answer without at least one retrieval
+(D-004). The recoverable-miss case in the final comparison shows a useful
+second retrieval recovering evidence a first search missed, for all three
+compared models. Citation validation deterministically rejects evidence not
+returned during the run, demonstrated in the final comparison by the two
+Claude Sonnet 5 runs it correctly rejected (`evaluation.md`). The
+unanswerable-control case produced the expected `insufficient_evidence`
+abstention from all three compared models. All four M4 deliverables and exit
+criteria are satisfied; see `evaluation.md` for the recorded comparison
+result and `decisions.md` (D-004, D-015) for the tool-contract fix and model
+selection.
 
 ### M5 — Evaluation
 

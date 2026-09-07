@@ -1,7 +1,7 @@
 # RepoRationale — Evaluation
 
 **Status:** Approved for MVP  
-**Last updated:** 2026-09-06
+**Last updated:** 2026-09-07
 
 This document explains how RepoRationale will be evaluated: what the system
 must prove, how evidence and answers will be reviewed, which measurements will
@@ -50,18 +50,22 @@ The provisional candidates serve different purposes:
 
 | Candidate | Evaluation role |
 | --- | --- |
-| CrossPR Risk Analyzer | Controlled development corpus with familiar Markdown decisions and commit history |
+| [`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer) | Author-owned companion repository for controlled dogfooding and development, with familiar Markdown decisions and commit history |
 | [`psf/black`](https://github.com/psf/black) | Leading smaller main-corpus candidate |
 | [`BurntSushi/ripgrep`](https://github.com/BurntSushi/ripgrep) | Smaller-to-moderate non-Python alternative |
 | [`pydantic/pydantic`](https://github.com/pydantic/pydantic) | Larger ingestion and retrieval stress candidate |
 | [`prettier/prettier`](https://github.com/prettier/prettier) | Larger non-Python stress candidate |
 | [`microsoft/vscode`](https://github.com/microsoft/vscode) | Deliberately oversized preflight-rejection case |
 
-CrossPR can support early development and a small controlled evaluation, but it
-cannot exercise the complete pull-request and issue corpus expected from the
-main external evaluation repository. The oversized case evaluates admission
-and rejection behaviour; it is not expected to become an answer-quality
-corpus. Repositories are indexed and evaluated separately.
+[`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer)
+is an author-owned companion repository created by the same developer as
+RepoRationale. It can support early development, dogfooding, and a small
+controlled evaluation because its rationale is familiar and directly
+reviewable. It cannot exercise the complete pull-request and issue corpus
+expected from the main external evaluation repository, and it is not
+independent evidence of performance on an unfamiliar repository. The oversized
+case evaluates admission and rejection behaviour; it is not expected to become
+an answer-quality corpus. Repositories are indexed and evaluated separately.
 
 ### Establishing reviewed questions
 
@@ -125,10 +129,267 @@ These are contract and persistence checks, not evidence that Voyage provides
 good semantic retrieval on real repository history. That claim requires the
 reviewed corpus, real Voyage embeddings, and retrieval metrics defined above.
 
+### Development chunk-size calibration
+
+Chunk size was calibrated offline against completed normalized
+snapshots of [`pallets/itsdangerous`](https://github.com/pallets/itsdangerous)
+at commit `672971d66a2ef9f85151e53283113f33d642dabd` and
+[`pallets/markupsafe`](https://github.com/pallets/markupsafe) at commit
+`b2e4d9c7687be25695fffbe93a37622302b24fb1`. The snapshots contained 1,659 and
+2,148 independently citation-addressable sources respectively. No GitHub,
+embedding, vector-store, or answering-model API was called.
+
+The calibration had two deliberately separate stages:
+
+1. The existing deterministic chunker was run in memory at 750, 1,000, 1,500,
+   and 2,000 characters. This stage measured fragmentation and output volume;
+   it did not measure retrieval quality. As an exploratory boundary diagnostic,
+   up to 200 and 320 approximately 500-character windows around causal terms
+   such as “because”, “reason”, and “instead” were checked for containment in a
+   single chunk. These keyword-selected windows were not reviewed ground truth
+   and included false positives such as logs or dependency text, so their
+   percentages were used only to identify fragmentation risk. The
+   750-character candidate was removed from the shortlist because it generated
+   the most fragments and had the lowest window containment in both corpora.
+2. Six real rationale cases, three per repository, were reviewed manually.
+   Each case had a natural-language question, one known supporting source ID,
+   and a specific passage that made the source sufficient. The same source
+   documents were chunked at 1,000, 1,500, and 2,000 characters, indexed by the
+   project's standard offline BM25 implementation, and searched with a fixed
+   top-five limit. Hit@5 and MRR@5 used the known source ID; passage containment
+   checked whether the complete reviewed passage remained in a single chunk.
+
+The first-stage output counts were:
+
+| Maximum characters | ItsDangerous chunks | MarkupSafe chunks | Combined |
+| ---: | ---: | ---: | ---: |
+| 750 | 3,498 | 5,081 | 8,579 |
+| 1,000 | 3,082 | 4,421 | 7,503 |
+| 1,500 | 2,636 | 3,679 | 6,315 |
+| 2,000 | 2,346 | 3,230 | 5,576 |
+
+The exploratory window-containment diagnostic was:
+
+| Maximum characters | ItsDangerous windows | MarkupSafe windows |
+| ---: | ---: | ---: |
+| 750 | 60.0% | 57.8% |
+| 1,000 | 75.5% | 72.2% |
+| 1,500 | 84.5% | 79.1% |
+| 2,000 | 91.0% | 90.0% |
+
+These values mean only that a selected text window did or did not cross a
+chunk boundary. They are not retrieval success rates and were not treated as
+evidence that a chunk contained a correct answer.
+
+The reviewed retrieval results were:
+
+| Maximum characters | Hit@5 | MRR@5 | Passages kept in one chunk |
+| ---: | ---: | ---: | ---: |
+| 1,000 | 5/6 | 0.625 | 6/6 |
+| 1,500 | 5/6 | 0.625 | 5/6 |
+| 2,000 | 5/6 | 0.625 | 6/6 |
+
+The same semantic-wording case failed at every size: BM25 returned related
+records from the correct issue in the top five, but the exact decision-bearing
+comment did not appear in the top 50 because the question and comment shared
+too little vocabulary. This is a lexical-baseline limitation to test explicitly
+with Voyage retrieval, not evidence for or against a chunk size.
+
+The 2,000-character maximum was selected for MVP development. It tied the
+1,000-character candidate on every reviewed retrieval and containment measure
+while producing 1,927 fewer chunks, a 25.7% reduction. It also avoided the
+1,500-character candidate's observed boundary failure, where a
+1,502-character source became a 1,495-character chunk plus a six-character
+remainder and the reviewed supporting passage crossed that boundary. Fewer
+chunks also mean fewer embeddings and less opportunity for multiple fragments
+of one source to occupy the fixed result set.
+
+This was a small parameter-selection pilot, not the final held-out evaluation.
+It did not measure Voyage retrieval, generated answers, citations, latency, or
+API cost, and it does not support a general claim that 2,000 characters is
+optimal for other repositories. Those questions remain part of the later
+reviewed evaluation.
+
+### Development Voyage/Chroma retrieval pilot
+
+The selected 2,000-character artifacts were embedded through
+the standard Voyage endpoint with `model="voyage-4"`, document input semantics,
+no truncation, and the model's default 1,024 dimensions. The returned vectors
+were stored in separate local Chroma indexes configured for cosine distance.
+Each completed index passed full manifest, digest, record-count, dimension, and
+persisted-collection validation, then reopened without another document
+embedding call.
+
+| Repository | Chunks/vectors | Document tokens | Build and validation |
+| --- | ---: | ---: | ---: |
+| ItsDangerous | 2,346 | 439,936 | 54.9 s |
+| MarkupSafe | 3,230 | 698,938 | 75.1 s |
+| **Combined** | **5,576** | **1,138,874** | **130.0 s** |
+
+An initial attempt under Voyage's reduced no-payment-method limits failed with
+a rate-limit response before publication. The atomic workflow left no vector
+index or staging directory. After standard account limits were enabled, both
+builds completed. The successful document run's list-price equivalent at
+`$0.06` per million tokens was approximately `$0.068`; actual cost was `$0`
+under the account's free token allowance. Tokens accepted during the failed
+attempt were not returned by the interrupted adapter call and are therefore not
+included in the successful-run count.
+
+The same six pre-reviewed questions and exact expected source IDs used for the
+BM25 chunk-size pilot were then run against both persisted retrieval paths with
+a fixed top-five limit:
+
+| Development case | Voyage rank | BM25 rank |
+| --- | ---: | ---: |
+| Remove the default SHA-512 fallback signer | — | 4 |
+| Change the timestamp epoch from 2011 to 1970 | 1 | 1 |
+| Aware-datetime compatibility risk | 2 | 1 |
+| Remove the generic string-method wrapper | 4 | 1 |
+| Reject an environment-variable speedup control | — | — |
+| Do not publish wheels without speedups | — | 2 |
+| **Hit@5** | **3/6** | **5/6** |
+| **MRR@5** | **0.292** | **0.625** |
+
+Voyage used 85 query tokens across the six calls. Mean end-to-end vector query
+latency, including the remote query embedding and local Chroma search, was
+343.2 ms. Loading the completed indexes made zero document-embedding calls.
+
+Manual review of the misses preserved the predeclared exact-source metric
+rather than changing ground truth after seeing results:
+
+- for the fallback-signer question, Voyage returned the implementing pull
+  request and commits, which identify what changed and link the issue but do
+  not themselves document why it changed; the strict miss therefore remains;
+- for the environment-variable question, Voyage returned generally related
+  speedup discussions rather than the final decision-bearing comment; this is
+  a substantive miss; and
+- for the wheels question, Voyage returned a different comment that does
+  support a rationale for requiring speedups. This exposes an incomplete
+  expected-source set, but the original metric remains unchanged. Future
+  reviewed question data must record every independently acceptable source
+  before execution.
+
+Two development-only query refinements then tested whether a second retrieval
+could recover the two substantive misses. A refinement following the pull
+request's reference to issue 155 retrieved the fallback-signer rationale at
+rank 5. A terminology-focused refinement for the environment-variable decision
+retrieved the correct issue description at rank 2 but still did not retrieve
+the final decision comment. The two refinements used 38 query tokens and made
+no document-embedding calls.
+
+This small pilot shows that the persisted vector path operates correctly and
+that a bounded second retrieval can recover useful missing evidence in at least
+one real case. It does not show that Voyage outperforms the lexical baseline;
+on this narrow exact-source set, BM25 was stronger. The cases were selected for
+chunk calibration rather than as a representative held-out comparison, and no
+generated answer, citation, abstention, or Claude model was evaluated.
+
 ## 4. Answer evaluation
 
 Answer evaluation checks whether the agent chose the correct outcome and used
 its bounded retrieval loop effectively.
+
+### Development Claude-model comparison protocol
+
+Before any live answer-generation call, the bounded model-selection comparison
+is fixed as follows. It is a development experiment for selecting the MVP
+answering model, not the final held-out evaluation. All models use the same
+persisted Voyage 4 indexes, 2,000-character chunks, top-five retrieval limit,
+answering workflow and prompt version, and three-search maximum.
+
+| Case | Repository | Fixed question | Reviewed expectation |
+| --- | --- | --- | --- |
+| Direct retrieval | ItsDangerous | Why was the timestamp epoch changed from 2011 to 1970? | `answered`; the documented reason is compatibility with systems whose clocks can be earlier than 2011, supported by [the maintainer's historical explanation](https://github.com/pallets/itsdangerous/issues/204#issuecomment-770040669). |
+| Recoverable miss | ItsDangerous | Why was the default SHA-512 fallback signer removed? | `answered`; if the first result set contains only the implementing pull request or commits, a useful refinement should recover [the rationale in issue 155](https://github.com/pallets/itsdangerous/issues/155). |
+| Difficult miss | MarkupSafe | Why did MarkupSafe reject adding an environment variable to disable the C speedups? | `answered` only when the decision evidence is retrieved; [the final maintainer comment](https://github.com/pallets/markupsafe/issues/471#issuecomment-2422705831) explains the rationale. Safe abstention is preferable to an unsupported answer but remains an outcome miss for this answerable case. |
+| Unanswerable control | MarkupSafe | Why did MarkupSafe switch its release automation from polling to webhooks? | `insufficient_evidence`; the reviewed development snapshot contains no documented decision matching this premise. |
+
+The candidates are the current active Claude API tiers available for this
+comparison: `claude-haiku-4-5-20251001`, `claude-sonnet-5`, and
+`claude-opus-5`. At execution time their published standard prices were,
+respectively, `$1/$5`, `$2/$10`, and `$5/$25` per million input/output tokens.
+The exact identifiers, availability, and prices are rechecked immediately
+before execution because provider offerings can change.
+
+Each of the four cases runs once per model, for 12 agent runs. No failed or
+unfavourable output is replaced by a more convenient retry. The application
+limit permits at most three retrievals and therefore at most four Claude calls
+per agent run: the complete comparison is capped at 48 Claude calls and 36
+Voyage query embeddings. Runs execute sequentially. Before each new agent run,
+the comparison stops if accumulated estimated Anthropic spend has reached
+`$3.00`; no Batch API, prompt caching, fast mode, or provider-side tools are
+used.
+
+Every run records the structured outcome, searches and sufficiency assessments,
+retrieved evidence IDs, citations, model-call and retrieval latencies, token
+usage, estimated cost, and any provider or protocol error. Raw traces remain
+private local artifacts; only the reviewed aggregate result is added here.
+
+Selection first applies the hard requirements below. Among models without a
+hard failure, the primary comparison is correct grounded outcome across the
+four cases, including abstention on the control and no unsupported answer on
+the difficult miss. Useful refinement, fewer unnecessary searches, and
+claim-level citation support are reviewed explicitly. Cost is the first
+tie-breaker and latency the second; this small run selects the model for this
+project and does not establish that it is universally superior.
+
+### Final Claude-model comparison result
+
+The fixed 12-run comparison completed after the structural tool-calling
+correction. Its raw traces remain private local artifacts and the aggregate
+result is recorded here. All 12 planned agent runs completed — no run crashed
+on a provider, credential, or network failure — using 36 total Anthropic calls
+for an estimated total Anthropic cost of `$0.32678`, well under the `$3.00`
+stop. No run's model attempted a `refine_search` call after its three-search
+budget was exhausted and the tool was withheld, confirming the state-aware
+exhausted-budget guidance.
+
+| Model | Valid structured outcomes | Exact outcome/evidence match | Hard grounding failures | Anthropic calls | Mean wall-clock | Total cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Claude Haiku 4.5 | 4/4 | 3/4 | 0 | 12 | ~19.7 s | ~`$0.0351` |
+| Claude Sonnet 5 | 2/4 | 1/4 (plus correct abstention on the control) | 2 | 13 | ~18.0 s | ~`$0.0994` |
+| Claude Opus 5 | 4/4 | 4/4 | 0 | 11 | ~13.0 s | ~`$0.1922` |
+
+Claude Sonnet 5's two hard grounding failures were both caught by existing
+deterministic validators rather than silently accepted:
+
+1. On the direct-retrieval case, its final answer text contained
+   XML-like tool-format fragments and citation markers `[1]`, `[2]`, `[4]`,
+   while its actual structured `citations` list contained only one entry.
+   The citation-marker validator correctly rejected the mismatch.
+2. On the difficult-miss case, it cited a real MarkupSafe evidence ID that
+   its own retrieval had not returned during that run. The provenance
+   validator correctly rejected the unknown citation.
+
+The most plausible explanations for citing evidence the run did not retrieve
+are inference from the surrounding retrieved context or an outright
+fabricated-looking but coincidentally real ID; leaked pretraining knowledge
+of the specific comment is one further possible explanation but is not
+established by this run. The only established finding is that the cited
+evidence ID was not among the results `search_history`/`refine_search`
+returned during that run, which is exactly the condition the citation
+validator exists to catch.
+
+Claude Haiku 4.5's difficult-miss case did not fail: it retrieved and cited
+a real, on-topic MarkupSafe maintainer comment supporting the same general
+rationale (that the C speedups are not meant to be user-optional), but not
+the specific predeclared decision comment for that case. This is recorded as
+a non-exact evidence match, not a hallucination or grounding failure.
+
+Claude Opus 5 matched the predeclared expected outcome and expected evidence
+on all four cases, including retrieving and citing the intended
+difficult-miss decision comment directly on its first search, and recovering
+the recoverable-miss rationale from issue 155 through one `refine_search`
+call.
+
+Limitations of this result: it is one run per case per model across four
+development cases selected for chunk and tool-contract calibration, not a
+held-out or statistically powered evaluation; Claude API responses are
+expected to vary run to run; the measured latency differences do not show
+that Claude Opus 5 is generally faster than Claude Haiku 4.5 or Claude
+Sonnet 5; and the broader held-out evaluation with a reviewed question set
+remains the next stage of work. The selected model is recorded in the project
+decision log.
 
 ### Hard agent requirements
 
@@ -182,7 +443,7 @@ expose a meaningful limitation belong in the evaluation:
 | --- | --- |
 | BM25 versus vector retrieval | Measure lexical and semantic retrieval on identical chunks and questions |
 | One search versus bounded agent loop | Test whether a second or third search improves weak-first-search cases |
-| Two-model Claude comparison | Select the MVP model using the same tool contract, evidence, questions, and answer format |
+| Three-model Claude comparison (completed) | Select the MVP model using the same tool contract, evidence, questions, and answer format |
 | End-to-end evaluation | Measure answers, abstentions, grounding, failures, latency, and cost together |
 
 The Claude comparison considers tool-call correctness, outcome accuracy,
@@ -343,8 +604,8 @@ The reviewed questions and expected evidence will be stored as a small
 versioned evaluation input. One evaluation command will run the cases,
 calculate the retrieval metrics, collect timings and usage, and generate a
 readable local report. Detailed traces and model outputs remain under
-`.local/evaluation-runs/`; aggregate findings are added to this document so
-they can be reviewed without reading raw files.
+private local storage; aggregate findings are added to this document so they
+can be reviewed without reading raw files.
 
 ### Visual evidence to add later
 

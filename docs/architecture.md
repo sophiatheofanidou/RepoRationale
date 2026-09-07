@@ -1,7 +1,7 @@
 # RepoRationale — Architecture
 
 **Status:** Approved for MVP  
-**Last updated:** 2026-09-06
+**Last updated:** 2026-09-07
 
 This document explains how RepoRationale is built: how repository history
 becomes searchable evidence, how a user question becomes a cited answer, which
@@ -131,8 +131,9 @@ Markdown sources are split first by heading section and then by block boundary;
 other source types keep their citation-addressable document as the natural
 boundary and split long text at paragraph boundaries. An explicit character
 limit bounds every chunk, with deterministic whitespace-aware fallback for an
-oversized block. The implementation currently adds no overlap and fixes no
-product-wide chunk size; those remain retrieval parameters to evaluate.
+oversized block. MVP indexing uses a product-wide maximum of 2,000 characters
+with no overlap. This remains application configuration rather than an
+end-user-selectable setting.
 
 Derived chunks are stored deterministically beneath the validated normalized
 snapshot as a separate `chunks/` artifact. Its manifest records the source and
@@ -212,9 +213,10 @@ flowchart LR
 - **Answering agent:** decides what to search and evaluates whether the returned
   evidence answers the actual question. It never explores the repository
   directly.
-- **`search_history` tool:** the agent's only tool. It accepts a text query and
-  requests a bounded search over every chunk in the active snapshot. It exposes
-  no source, author, date, state, or repository-item filters.
+- **`search_history` tool:** the agent's only tool able to query repository
+  history. It accepts a text query and requests a bounded search over every
+  chunk in the active snapshot. It exposes no source, author, date, state, or
+  repository-item filters.
 - **Search vector index:** performs semantic similarity search for the current
   query.
 - **Return ranked evidence:** supplies the most relevant chunks with source
@@ -245,9 +247,18 @@ executed.
 
 The Anthropic adapter owns the Claude message history and translates the
 standard tool-use and tool-result exchange into those application actions. It
-accepts a maintainer-supplied model identifier and exposes only the fixed
-query-only `search_history` schema. Provider response objects and citation
-metadata never cross the adapter boundary.
+accepts a maintainer-supplied model identifier and exposes a fixed set of
+four tools: two query-only schemas covering the same bounded search,
+`search_history` for the mandatory first call and `refine_search` for every
+later one (whose own stated reason for refining is consequently a required
+field rather than an optional one), and two non-retrieval tools,
+`provide_answer` and `report_insufficient_evidence`, through which the model
+must express its final answer or abstention as a schema-validated tool call
+rather than free-form text. Every turn after the first forces the model to
+call exactly one of the tools currently offered; extended thinking is
+explicitly disabled so no supported model substitutes a `thinking` block for
+that required call. Provider response objects and citation metadata never
+cross the adapter boundary.
 
 For an answered result, the workflow resolves numbered citations from the
 accumulated evidence rather than trusting model-supplied titles, links, or
@@ -261,8 +272,8 @@ traces are not persisted at this stage.
 ## 4. Architecture roles and MVP technologies
 
 The lifecycles above define the technology-independent architecture. The MVP
-implements each role with one concrete choice, except for the exact Claude
-model, which will be selected through evaluation:
+implements each role with one concrete choice, including the exact Claude
+model, selected through a bounded development comparison:
 
 | Architecture role | MVP technology | Responsibility | Does not |
 | --- | --- | --- | --- |
@@ -271,7 +282,7 @@ model, which will be selected through evaluation:
 | Repository source adapter | [GitHub REST API](https://docs.github.com/en/rest) | Collects the complete supported GitHub corpus through explicit pagination and normalizes it | Expose raw GitHub responses to the core, use GraphQL, or support another platform in the MVP |
 | Embedding provider | [Voyage 4](https://docs.voyageai.com/docs/embeddings) | Creates embeddings for indexed chunks and incoming search queries | Search the index, assess evidence, or generate answers |
 | Vector storage and retrieval | [Chroma](https://docs.trychroma.com/) | Persists chunk vectors and returns ranked evidence for a query | Create embeddings, reason about evidence, or generate answers |
-| Answering-model provider | [Anthropic Claude](https://platform.claude.com/docs/en/models/overview) through the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python); exact model selected by evaluation | Chooses queries, calls `search_history`, assesses evidence sufficiency, and generates the cited answer | Access repository or storage systems directly, or cite evidence that retrieval did not return |
+| Answering-model provider | [Anthropic Claude](https://platform.claude.com/docs/en/models/overview) through the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python); MVP model is `claude-opus-5`, selected by a bounded development comparison | Chooses queries, calls `search_history`, assesses evidence sufficiency, and generates the cited answer | Access repository or storage systems directly, or cite evidence that retrieval did not return |
 | Snapshot persistence | Local manifest and [JSON Lines](https://jsonlines.org/) source/chunk files, plus the Chroma index | Makes completed repository indexes reusable and rebuildable while keeping generated data local | Treat incomplete data as ready or store user credentials in the snapshot |
 | Offline retrieval baseline | [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) over the same chunks | Compares lexical retrieval with the product's semantic retrieval during evaluation | Participate in `search_history`, prefilter vector results, or create a second product retrieval path |
 
@@ -282,7 +293,12 @@ rewriting both lifecycles. The MVP implements only one option at each boundary
 and searches one repository snapshot at a time.
 
 Chunk size, retrieval result count, request concurrency, batching, retries,
-repository admission limits, and the exact Claude model will be selected from
-measurements rather than exposed as user choices.
+repository admission limits, and the exact Claude model are selected from
+measurements rather than exposed as user choices. The Claude model identifier
+stays a configuration argument to the answering adapter, not a value the UI
+lets a user choose; the provider-neutral application and domain contracts
+described in section 3 do not depend on which Claude model is configured, so
+a later Claude model can replace `claude-opus-5` without changing retrieval
+or domain logic.
 
 Current delivery state is maintained in [plan.md](plan.md).

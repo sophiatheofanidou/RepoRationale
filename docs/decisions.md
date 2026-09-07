@@ -111,6 +111,7 @@ contracts.
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
+- **Amended:** 2026-09-07
 
 ### Context
 
@@ -118,33 +119,129 @@ A fixed retrieve-once-and-answer pipeline would demonstrate basic RAG but would
 not handle questions whose first retrieval lacks the necessary evidence. Some
 historical questions require query reformulation or a second, narrower search.
 
+The original decision left open exactly how the agent's non-retrieval actions
+(a search refinement's stated reason, the final grounded answer, and an
+abstention) would reach the application: the first MVP implementation asked
+the answering model to emit a single free-form JSON text block for each of
+these, alongside a `search_history` tool call when refining. This was
+exercised only with hand-written fake provider responses before the first
+live bounded-comparison run.
+
+That live run, on 2026-09-06, executed the fixed evaluation-development
+comparison across `claude-haiku-4-5-20251001`, `claude-sonnet-5`, and
+`claude-opus-5` and initially failed on all 12 planned runs, then continued to
+fail after an unrelated defect (missing explicit `tool_choice`, corrected in
+this same window) was fixed. The remaining, reproducible failures were:
+
+- Claude Haiku 4.5 returned a syntactically valid but completely blank final
+  text block (`stop_reason="end_turn"`, one `text` content block whose text
+  was the empty string) every time it was expected to answer or abstain, in
+  all 4 tested cases;
+- Claude Sonnet 5, when refining a search, called `search_history` again but
+  did not include the required accompanying text block carrying
+  `{"missing_information": "..."}`, so the parser found zero text blocks
+  where exactly one was required;
+- before `thinking` was explicitly disabled on every request, Claude Sonnet 5
+  also returned an unrequested `thinking` content block (adaptive extended
+  thinking, on by default for this model generation unless turned off) in
+  place of the required text, compounding the same failure.
+
+All three cases share one root cause: the design asked the model to reliably
+produce free-form text in a specific shape *simultaneously with, or instead
+of,* a tool call, and current models do not follow that combination
+reliably. Two remedies were considered:
+
+1. Keep the free-text-JSON design and mitigate through prompt engineering
+   (more explicit, example-driven instructions demanding the text block is
+   never omitted or left blank). This requires no contract change and stays
+   fully inside the original decision, but it is a probabilistic mitigation,
+   not a structural guarantee: nothing prevents the same failure from
+   recurring with a different question, a different model, or a later model
+   version, since the model is still free to omit or blank the required text.
+2. Move every non-retrieval action the model can take into its own
+   schema-validated tool call, and force `tool_choice` on every turn so the
+   model can only respond by calling exactly one of the tools it was
+   offered. This removes free-form text from the model's response entirely,
+   which is Anthropic's own documented recommendation for reliable
+   structured output, at the cost of changing the exact tool surface this
+   decision originally fixed at one tool.
+
+The user directed implementing the structurally correct fix (2) rather than
+the reversible mitigation (1), and recording that choice here rather than
+silently amending the contract.
+
+Verifying fix (2) with the same two reproducing cases exposed one further,
+smaller instance of the identical root cause: with `provide_answer`,
+`report_insufficient_evidence`, and `tool_choice` in place, both Claude
+Haiku 4.5 and Claude Sonnet 5 now called a schema-validated `search_history`
+tool cleanly on every turn, but when refining they left its now-optional
+`missing_information` field unset — because an optional field the model is
+merely asked, not required, to fill in is exactly the same shape of
+unreliability already observed, just narrowed to one field. `search_history`
+was accordingly split into the mandatory-first-call tool and a separate
+`refine_search` tool whose `missing_information` field its own schema marks
+required, closing the same gap the same way as the rest of this decision.
+
 ### Decision
 
-The MVP will include a small agent with one query-only tool:
-`search_history(query: str)`. For each call, the tool performs vector retrieval
-across all chunks in the active repository snapshot and returns a fixed,
-internally bounded set of ranked chunks with their source provenance. The
-agent may pass the user's wording or formulate and refine its own search query
-in a later call. The MVP tool exposes no source, author, date, state, or
-repository-item filters.
+The MVP agent still has exactly two tools capable of querying repository
+history, both performing the identical bounded vector retrieval across all
+chunks in the active snapshot with no source, author, date, state, or
+repository-item filter, unchanged from the original decision:
+`search_history(query: str)` for the mandatory first search of a run, and
+`refine_search(query: str, missing_information: str)` for every later one.
+`missing_information` is required and non-blank on `refine_search` and does
+not exist on `search_history`; it is a same-call annotation of the model's
+own stated reason for refining and never changes what is retrieved.
 
-After each retrieval call, the agent makes an explicit `sufficient` or
-`insufficient` evidence assessment against the user's question. When evidence
-is insufficient, it identifies what is missing and may reformulate the query
-or follow a referenced pull request or issue. The agent may make at most three
-retrieval calls for one user question. It may stop earlier as soon as evidence
-is sufficient; after the third call it must answer from the retrieved evidence
-or abstain.
+The agent's two non-retrieval actions are also expressed as forced tool
+calls rather than free-form text: `provide_answer(answer: str, citations:
+[{evidence_id: str}, ...])` for a grounded answer, and
+`report_insufficient_evidence(explanation: str)` for an abstention. Every
+model turn after the first is requested with `tool_choice: {"type": "any",
+"disable_parallel_tool_use": true}` over whichever of these tools apply
+(`refine_search` is withheld once the three-call budget is exhausted), so
+the model can respond only by calling exactly one of them; the first turn
+forces `search_history` specifically with `tool_choice: {"type": "tool",
+"name": "search_history", "disable_parallel_tool_use": true}`. Extended
+thinking is explicitly disabled (`thinking: {"type": "disabled"}`) on every
+request so no model in this generation returns a `thinking` block in place
+of the required tool call.
+
+The bounded-loop policy this decision established is otherwise unchanged:
+after each retrieval call the agent makes an explicit `sufficient` or
+`insufficient` evidence assessment against the user's question, may make at
+most three retrieval calls for one user question, may stop earlier as soon
+as evidence is sufficient, and after the third call must answer from the
+retrieved evidence or abstain.
 
 ### Consequences
 
-The loop must be bounded, observable, testable, and evaluated. The sufficiency
-assessment, missing-information rationale, and next query are recorded for
-evaluation. A numeric model-generated confidence score is not used as an
-accuracy probability or stopping threshold. Specific repository identifiers
-may be included in the text query rather than passed as structured filters.
-The agent does not receive filesystem, shell, code-modification, or arbitrary
-external tools.
+The loop must be bounded, observable, testable, and evaluated. The
+sufficiency assessment, missing-information rationale, and next query are
+recorded for evaluation. A numeric model-generated confidence score is not
+used as an accuracy probability or stopping threshold. Specific repository
+identifiers may be included in the text query rather than passed as
+structured filters. The agent does not receive filesystem, shell,
+code-modification, or arbitrary external tools.
+
+The provider-neutral application workflow and domain contracts
+(`SearchRequested`, `FinalAnswer`, `FinalInsufficientEvidence`, and the
+bounded loop in `answer_question`) required no change: this amendment is
+confined entirely to the Anthropic adapter's request/response translation,
+confirming the provider-isolation boundary established by D-007. "One
+query-only tool" in this decision's title and consequences now specifically
+means the agent's query-only capability over repository history, split
+across `search_history` and `refine_search` for the reason given above; the
+agent's total tool surface is four tools, none of which accept a repository,
+source, author, date, state, item-ID, backend, filter, or result-count
+parameter, and none of which grant filesystem, shell, code-modification, or
+external access. This amendment was re-verified against the full 12-run
+comparison recorded under D-015: with the fix in place, every run produced
+either a valid structured outcome or a citation/grounding failure that the
+existing validators correctly rejected, and no run's model attempted a
+`refine_search` call after the search budget was exhausted and the tool was
+withheld. Model selection itself is recorded under D-015.
 
 ## D-005 — Require evidence-backed answers and explicit abstention
 
@@ -371,7 +468,6 @@ larger repositories and repeated-use settings.
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
-
 ### Context
 
 The completed project needs a small visual interface, but it does not require a
@@ -436,6 +532,7 @@ complexity.
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
+- **Amended:** 2026-09-07
 
 ### Context
 
@@ -445,23 +542,68 @@ and produce a cited answer or abstain. Different Claude model tiers may trade
 off tool-use reliability, answer quality, latency, and cost, so the exact MVP
 model should not be fixed without project-specific evidence.
 
+The fixed 12-run development comparison defined in `evaluation.md`, across
+`claude-haiku-4-5-20251001`, `claude-sonnet-5`, and `claude-opus-5`, completed
+on 2026-09-06/07 after the structural tool-calling fix recorded in D-004. On
+this final run, Claude Haiku 4.5 and Claude Opus 5 passed every hard
+requirement on all four cases: no more than three retrieval calls, an
+explicit sufficiency assessment after every search, a valid structured
+`answered` or `insufficient_evidence` outcome, and no citation referring to
+evidence the run did not return. Claude Sonnet 5 failed two of the four cases
+on these same hard requirements — an answer whose `[1][2][4]` markers did not
+match its own one-item structured citations list on the direct-retrieval
+case, and a citation to a real but not-retrieved evidence ID on the
+difficult-miss case — both correctly rejected by the existing validators
+rather than silently accepted.
+
+Among the two models with no hard failure, only Claude Opus 5 matched the
+predeclared expected outcome and expected evidence on all four cases,
+including retrieving and citing the intended difficult-miss decision comment
+directly on its first search. Claude Haiku 4.5 matched three of the four: it
+missed only the difficult-miss case, where it retrieved and cited a
+different, real MarkupSafe comment supporting the same general rationale
+rather than the specific predeclared decision comment — a partial-evidence
+miss, not a fabricated citation. Opus was also the fastest of the three
+models on this run and Haiku the cheapest by a wide margin; full figures are
+recorded in `evaluation.md`. This was one run per case across four
+development cases, with expected run-to-run stochasticity, not a
+statistically powered study.
+
 ### Decision
 
 Use Anthropic's official Python SDK and keep the Claude model identifier
-configurable for maintainers and tests, but do not expose model selection in
-the MVP UI. Select the exact model through a bounded comparison on the same
-seed questions and retrieved evidence, considering tool-call correctness,
-evidence-sufficiency and abstention behaviour, citation-grounded answer quality,
-latency, and cost. Isolate Anthropic request and response types behind the
-provider boundary established in D-007.
+configurable for maintainers and tests; do not expose model selection in the
+MVP UI. `claude-opus-5` is the selected MVP answering model, chosen because it
+was the only candidate with no hard requirement failure that also matched the
+predeclared expected outcome and expected evidence on all four comparison
+cases. Isolate Anthropic request and response types behind the provider
+boundary established in D-007.
+
+Claude Haiku 4.5 is recorded as a strong, meaningfully cheaper alternative —
+it passed every hard requirement and matched three of the four predeclared
+cases at roughly a fifth of Opus's measured cost on this comparison — but it
+is not the selected model, because it did not match the predeclared decision
+evidence on the difficult-miss case. Claude Sonnet 5 is excluded from
+selection because it produced two hard citation/grounding failures on this
+run.
 
 ### Consequences
 
 The MVP requires an Anthropic API key and incurs usage-based generation cost.
-The selected model and comparison results must be recorded in the evaluation
-document before the final agent evaluation. The project will not claim that the
-selected model is universally best; another Claude model can be substituted
-later without changing retrieval or domain logic.
+The comparison results are recorded in `evaluation.md`. The Claude model
+identifier remains an adapter-level configuration argument rather than a
+stored application default: no production composition root exists yet that
+would need one. When such a composition root is introduced, it must default
+to `claude-opus-5` and carry a test confirming that default; model selection
+still must not be exposed in the MVP UI.
+
+This was a small, project-specific development comparison, not a statistical
+study. It selects the most suitable model for this project's bounded agent
+loop and evidence set; it does not establish that Claude Opus 5 is
+universally superior to Claude Haiku 4.5 or Claude Sonnet 5 — including on
+the measured latency, which this single run per case cannot generalize.
+Another Claude model can still be substituted later without changing
+retrieval or domain logic.
 
 ## D-016 — Use Voyage 4 for embeddings
 
@@ -500,11 +642,15 @@ different provider can be tested later if the evaluation exposes a need.
 
 A credible evaluation requires enough understanding of a repository to verify
 ground-truth answers, not merely judge whether generated answers sound
-plausible. CrossPR has useful design documents and commit history but no pull
-request history. An unfamiliar third-party repository may offer richer history
-but would require substantial domain study before its answers could be reviewed
-reliably. RepoRationale itself may accumulate suitable real history during
-implementation, but that history does not exist yet.
+plausible. [`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer),
+an author-owned companion repository created by the same developer as
+RepoRationale, has useful design documents and commit history but no
+pull-request history. It can support controlled dogfooding because its rationale
+is familiar and directly reviewable, but it is not an independent external
+corpus. An unfamiliar third-party repository may offer richer history but would
+require substantial domain study before its answers could be reviewed reliably.
+RepoRationale itself may accumulate suitable real history during implementation,
+but that history does not exist yet.
 
 ### Decision
 
@@ -629,10 +775,11 @@ Only small deterministic test fixtures, configuration examples, evaluation
 inputs, and aggregate results belong in Git. Separate local indexes may exist,
 but the application queries one active repository snapshot at a time.
 
-## D-021 — Use source-aware chunking and one embedding per chunk
+## D-021 — Use source-aware 2,000-character chunks and one embedding per chunk
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
+- **Amended:** 2026-09-06
 
 ### Context
 
@@ -650,14 +797,34 @@ messages will use source-appropriate boundaries. Each chunk receives one
 embedding and retains its source ID, URL, type, position, and relevant heading
 or discussion metadata.
 
-Exact target size and overlap remain retrieval parameters to be selected with
-seed queries rather than fixed as a product requirement.
+Use a maximum of 2,000 characters per chunk with no overlap for the MVP. This
+value was selected with a development-only calibration over two completed real
+repository snapshots. An initial deterministic boundary check narrowed the
+candidates from 750, 1,000, 1,500, and 2,000 characters to the three larger
+sizes. A subsequent six-question pilot used manually reviewed rationale
+questions, known supporting source IDs and passages, and the existing offline
+BM25 retriever at a fixed top-five result limit.
+
+All three shortlisted sizes retrieved the known source for five of six cases
+and had the same MRR@5 of 0.625. Both 1,000 and 2,000 characters retained all
+six supporting passages within one chunk, whereas 1,500 retained five and
+split one 1,502-character source into a 1,495-character chunk and a
+six-character remainder. The 2,000-character setting produced 5,576 chunks
+across the two corpora, 1,927 fewer than the 7,503 produced at 1,000, without
+reducing measured retrieval or passage containment. It therefore preserves
+more source-local context and avoids unnecessary derived records and embedding
+requests without showing a loss in this calibration.
 
 ### Consequences
 
 One source may produce one or many searchable vectors. Retrieval returns chunks
 while citations continue to identify the original GitHub source. Chunking
 quality and its failure cases must be included in retrieval evaluation.
+The selected size is an application configuration rather than an end-user
+choice. The six development cases are not the held-out final evaluation and do
+not establish vector-retrieval or answer quality; later evaluation must report
+failures and may motivate a separately reviewed change rather than silently
+tuning this value after results are known.
 
 ## D-022 — Use bring-your-own credentials
 
@@ -830,7 +997,8 @@ current shortlist:
   issue and pull-request material observed during candidate review was not rich
   enough for the intended evaluation.
 
-CrossPR Risk Analyzer remains useful as a controlled development and secondary
+[`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer)
+remains useful as a controlled development, dogfooding, and secondary
 evaluation corpus because its Markdown decisions and commit history are
 familiar and reviewable. It is not a candidate for the main full-scope corpus
 because it has no pull-request history and therefore cannot exercise the

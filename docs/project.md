@@ -1,7 +1,7 @@
 # RepoRationale — Project Definition
 
 **Status:** Approved for MVP  
-**Last updated:** 2026-09-04
+**Last updated:** 2026-09-08
 
 This document is the source of truth for what RepoRationale is, who it is for,
 what belongs in the MVP, and what success means. Technical implementation
@@ -119,6 +119,18 @@ If the available sources identify a change but do not document its reason, the
 system says so explicitly. It must not infer an author's intent from the code
 alone and present that inference as fact.
 
+### Bounded conversational follow-up
+
+Within the current session, the user may continue with a bounded follow-up
+question that refers back to an earlier question or answer, such as "was
+that alternative reconsidered later?" Follow-up context is tied to the
+current session and the one active repository snapshot: it does not survive
+a browser refresh, a new session, an application restart, or a change of
+repository or snapshot, and it is never persisted. A prior generated answer
+helps the system interpret what a follow-up refers to, but it is never
+treated as evidence in its own right; every answer, including a follow-up's,
+is grounded only in evidence retrieved during its own run.
+
 ## 7. Why indexed retrieval instead of direct AI exploration
 
 A general AI coding agent with Git and GitHub access is a valid alternative. It
@@ -183,6 +195,9 @@ The MVP supports:
 - a bounded agent that can make a small number of retrieval calls;
 - natural-language answers with verifiable citations;
 - explicit abstention when evidence is insufficient;
+- bounded, session-scoped conversational follow-up questions tied to one
+  active repository snapshot, without durable or cross-session conversation
+  memory;
 - manual, repeatable repository indexing;
 - a small local demonstration interface;
 - bring-your-own GitHub, Voyage, and Anthropic credentials through local secret
@@ -208,6 +223,11 @@ The MVP does not include:
 - multiple collaborating agents or an open-ended autonomous agent;
 - code generation, code review, or modification of repository content;
 - fine-tuning an LLM;
+- durable or persisted conversation history: conversation context exists only
+  for the current session and its one active repository snapshot and does not
+  survive a refresh, a new session, a restart, or a repository or snapshot
+  change; this does not affect the local persistence of completed repository
+  snapshots and indexes described elsewhere in this document;
 - general questions whose answer comes only from the current source code rather
   than the repository's recorded history.
 

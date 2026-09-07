@@ -11,8 +11,11 @@ from reporationale.adapters.anthropic_answering import (
     _REPORT_INSUFFICIENT_EVIDENCE_TOOL,
     AnthropicAnswerError,
     AnthropicAnsweringAdapter,
+    _conversation_context_block,
 )
 from reporationale.domain.answering import (
+    ConversationContext,
+    ConversationTurn,
     FinalAnswer,
     FinalInsufficientEvidence,
     SearchRequested,
@@ -139,11 +142,17 @@ def _answer_response() -> _FakeResponse:
     )
 
 
-def _start(adapter: AnthropicAnsweringAdapter, *, search_available: bool = True):  # type: ignore[no-untyped-def]
+def _start(  # type: ignore[no-untyped-def]
+    adapter: AnthropicAnsweringAdapter,
+    *,
+    search_available: bool = True,
+    context: ConversationContext | None = None,
+):
     return adapter.start(
         question="Why was polling chosen?",
         evidence=(_evidence(),),
         search_available=search_available,
+        context=context,
     )
 
 
@@ -372,3 +381,97 @@ def test_common_prompt_describes_deterministic_first_search_and_grounding_rules(
     assert "even if you can explain what the evidence actually shows" in system
     assert "must correspond exactly and only to the distinct evidence_ids" in system
     assert "never use a number outside that range" in system
+
+
+def test_system_prompt_marks_prior_conversation_as_non_evidentiary() -> None:
+    client = _FakeAnthropicClient(_FakeMessagesNamespace([_answer_response()]))
+    adapter = AnthropicAnsweringAdapter(client=client, model_id="claude-test-model")
+    _start(adapter)
+
+    system = client.messages.calls[0].system
+    assert "not repository evidence" in system
+    assert "never cite them" in system
+    assert "never restate a prior answer's claim" in system
+    assert "You may cite only evidence returned by a search executed" in system
+    assert "resolve references, ellipsis, or the topic" in system
+
+
+def _context_with_one_prior_turn() -> ConversationContext:
+    return ConversationContext(
+        turns=(
+            ConversationTurn(
+                question="Why was polling chosen instead of webhooks?",
+                outcome="answered",
+                response="The history documents unreliable webhook delivery.",
+            ),
+        )
+    )
+
+
+def test_start_serializes_prior_context_question_and_evidence_distinctly() -> None:
+    client = _FakeAnthropicClient(_FakeMessagesNamespace([_answer_response()]))
+    adapter = AnthropicAnsweringAdapter(client=client, model_id="claude-test-model")
+    context = _context_with_one_prior_turn()
+
+    _start(adapter, context=context)
+
+    content = client.messages.calls[0].messages[0]["content"]
+    assert isinstance(content, str)
+    expected_context_block = _conversation_context_block(context)
+    assert expected_context_block
+    # Three distinct, ordered sections in one message: prior context first,
+    # then the current question, then this run's initial evidence.
+    assert content.startswith(expected_context_block)
+    rest = content[len(expected_context_block) :]
+    assert rest.startswith("Question:\nWhy was polling chosen?")
+    parsed = json.loads(expected_context_block.split(":\n", 1)[1].rsplit("\n\n", 1)[0])
+    assert parsed == [
+        {
+            "question": "Why was polling chosen instead of webhooks?",
+            "outcome": "answered",
+            "response": "The history documents unreliable webhook delivery.",
+        }
+    ]
+
+
+def test_context_serialization_excludes_citations_evidence_and_traces() -> None:
+    client = _FakeAnthropicClient(_FakeMessagesNamespace([_answer_response()]))
+    adapter = AnthropicAnsweringAdapter(client=client, model_id="claude-test-model")
+
+    _start(adapter, context=_context_with_one_prior_turn())
+
+    content = client.messages.calls[0].messages[0]["content"]
+    assert isinstance(content, str)
+    context_section = content.split("Question:\n", 1)[0]
+    for excluded in (
+        "evidence_id",
+        "excerpt",
+        "citations",
+        "source_url",
+        "latency",
+        "input_tokens",
+        "output_tokens",
+        "model_id",
+    ):
+        assert excluded not in context_section
+
+
+def test_omitted_and_empty_context_produce_identical_first_message() -> None:
+    omitted_client = _FakeAnthropicClient(_FakeMessagesNamespace([_answer_response()]))
+    omitted_adapter = AnthropicAnsweringAdapter(
+        client=omitted_client, model_id="claude-test-model"
+    )
+    _start(omitted_adapter)
+
+    empty_client = _FakeAnthropicClient(_FakeMessagesNamespace([_answer_response()]))
+    empty_adapter = AnthropicAnsweringAdapter(
+        client=empty_client, model_id="claude-test-model"
+    )
+    _start(empty_adapter, context=ConversationContext())
+
+    omitted_content = omitted_client.messages.calls[0].messages[0]["content"]
+    empty_content = empty_client.messages.calls[0].messages[0]["content"]
+    assert omitted_content == empty_content
+    assert isinstance(omitted_content, str)
+    assert "Prior conversation context" not in omitted_content
+    assert omitted_content.startswith("Question:\nWhy was polling chosen?")

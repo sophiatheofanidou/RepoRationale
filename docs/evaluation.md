@@ -1,7 +1,7 @@
 # RepoRationale — Evaluation
 
 **Status:** Approved for MVP  
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 
 This document explains how RepoRationale will be evaluated: what the system
 must prove, how evidence and answers will be reviewed, which measurements will
@@ -581,6 +581,47 @@ and Sonnet reproduced both prior hard grounding failures. The product workflow
 therefore adopts the exact first semantic query and retains Opus. These four
 targeted probes cost `$0.075998` in total; they support an orchestration
 correction and model-retention decision, not new aggregate quality claims.
+
+### Post-evaluation conversational-follow-up diagnostic
+
+After bounded, session-scoped conversational follow-up support was added to
+the answering workflow, one paid diagnostic was run once, without retry,
+against the existing completed Gson vector index to check that the new
+orchestration path behaves as intended. It made no GitHub call, no indexing
+call, and no document-embedding call, and it did not replace or rerun the
+frozen held-out result above.
+
+The scenario supplied one prior completed turn about why Gson's own classes
+are marked `final`, then asked the intentionally ambiguous follow-up "Did it
+have any other benefit?" The mandatory first semantic search still used that
+exact ambiguous question and returned unrelated evidence. Opus used the
+supplied conversation context only to construct a standalone,
+context-resolved `refine_search` query about additional benefits of marking
+Gson classes `final`; the second search retrieved the expected
+design-document passage and a related historical issue. The final answer
+described the documented optimization opportunity as a minor benefit and
+noted that the associated performance claim had been disputed, and both
+claims were supported by citations returned during this run.
+
+| Measure | Result |
+| --- | ---: |
+| Outcome | `answered` |
+| Searches | 2 |
+| Anthropic calls | 2 |
+| Voyage query requests/tokens | 2 / 22 |
+| Document-embedding requests | 0 |
+| Anthropic input/output tokens | 8,308 / 474 |
+| Wall-clock time | ~12.92 s |
+| Estimated Anthropic cost | `$0.05339` |
+| Malformed or unauthorized citations | 0 |
+| Retries | 0 |
+
+This is one bounded behavioural diagnostic, not a statistically powered
+evaluation. It did not rerun or replace the frozen held-out evaluation above,
+and it does not establish broad conversational-follow-up quality; it shows
+that a context-resolved refinement can recover evidence an ambiguous exact
+first search misses, within the unchanged three-search budget and with
+citations still limited to evidence returned during the run.
 
 ### Hard agent requirements
 

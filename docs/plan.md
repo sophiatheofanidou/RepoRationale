@@ -2,7 +2,7 @@
 
 **Project state:** Implementation  
 **Current milestone:** M6 — Demonstration and public documentation
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 
 This document is the source of truth for current progress, the active
 milestone, and the next implementation steps. It is not a detailed activity log
@@ -11,36 +11,60 @@ or a replacement for the product and architecture documents.
 ## 1. Current state
 
 **Active task:** Build the minimal Streamlit demonstration and final public documentation
-**Task status:** Ready
+**Task status:** Ready — Streamlit implementation itself has not started
 **Last completed work:** M5 remains closed with the frozen eight-case Gson
 held-out result. A bounded post-evaluation diagnostic then traced its one
-semantic-source limitation to the model-generated first query. D-030 now makes
-the unchanged user question the mandatory first Voyage/Chroma search and leaves
-Claude up to two evidence-informed refinements. Opus recovered and cited the
-expected design document in one search and one model call; Haiku added
-unsupported elaborations, and Sonnet repeated its two prior unauthorized-citation
-failures, so Opus remains selected. The implementation is versioned as
-`answering-workflow/3`.
-**Verification performed:** The frozen held-out artifact and its prior full
-verification remain valid. Four targeted first-query probes were reviewed;
-the final workflow and Anthropic adapter contract have focused offline coverage.
-The complete tracked suite passes with 680 tests, clean Ruff, all eight changed
-Python files formatted, strict mypy across 44 source files, and
-`git diff --check`.
+semantic-source limitation to the model-generated first query, and D-030 made
+the unchanged user question the mandatory first Voyage/Chroma search.
+
+Before starting the Streamlit build, the user approved one additional
+UI-independent slice: bounded, session-scoped conversational follow-up support
+in the core answering workflow (D-031), so the Streamlit layer would have a
+stable answering contract to call rather than being built against a design
+still in flux. The existing Streamlit mockups were deliberately left untouched
+and the Streamlit build itself was not started while this slice was
+implemented and independently reviewed. `ConversationTurn` and
+`ConversationContext` were added to the answering domain; `answer_question()`
+accepts an optional session-scoped context of at most three completed prior
+turns and passes it to the answering model only on the first turn, alongside
+the current question's initial evidence; the mandatory exact-question first
+search is unchanged, and Claude may use the context only to construct a
+context-resolved `refine_search` query within the unchanged three-search
+budget. Prior generated answers remain non-evidentiary: citation validation
+still accepts only evidence IDs returned during the current run. The
+implementation is versioned as `answering-workflow/4`.
+
+Independent review found no actionable defect in the diff. One approved live
+diagnostic against the completed Gson index then exercised the new
+orchestration path end to end: an intentionally ambiguous follow-up correctly
+triggered a context-resolved refinement, recovered the expected evidence, and
+produced a fully grounded, correctly cited `answered` outcome (recorded in
+`evaluation.md`).
+**Verification performed:** 51 focused answering/domain/adapter/evaluation-runner
+tests passed; the complete tracked suite passed with 700 tests; Ruff passed;
+all seven affected files passed the formatting check; strict mypy passed
+across 80 source files; and `git diff --check` passed. The only warnings were
+the pre-existing Chroma legacy-embedding-configuration deprecation warnings
+and a sandbox-specific pytest-cache warning, neither caused by this change.
+The frozen eight-case Gson held-out result and its prior full verification
+remain valid and unaffected.
 **Known limitations or deviations:** Blank commit messages are valid Git data
 and are excluded as non-rationale content, but the completed snapshot cannot
 reconstruct the exact count or identities skipped. The indexing report
 discloses this measurement gap separately rather than claiming zero known
 limitations. The larger limits are supported by one complete Gson measurement,
-not a production-capacity study.
+not a production-capacity study. The conversational-follow-up diagnostic is
+one bounded behavioural run, not a statistically powered evaluation of
+conversational quality.
 **Open questions or blockers:** No evaluation blocker remains. The frozen
 held-out run still reports its original limitation rather than rewriting the
 result after diagnosis. The expanded repository limits are supported by one
-complete Gson measurement rather than a production-capacity study.
-**Next action:** Implement the complete minimal Streamlit demo as one bounded
-milestone task: repository selection and preflight, ready-index reuse or
-explicit indexing confirmation with progress, question answering with citations
-and abstention, then concise setup/demo documentation and final verification.
+complete Gson measurement rather than a production-capacity study. The
+existing Streamlit mockups predate the accepted conversational-follow-up
+behaviour and have not yet been reviewed against it.
+**Next action:** Review the existing Streamlit mock direction with the user
+against the newly accepted conversational-follow-up behaviour before
+production Streamlit implementation begins.
 
 The project now has tested, repeatable ingestion, retrieval, and bounded
 agentic-answering foundations, including a completed and recorded Claude
@@ -63,16 +87,23 @@ corpus (D-019), local snapshots are persisted and reused (D-020), and
 embeddings are created per source-aware chunk (D-021). Users supply their own
 external-service credentials (D-022). The earlier evaluation-corpus deferral
 (D-017) was resolved in M5 by selecting Gson (D-029). The exact user question
-now drives the first semantic search before Opus is invoked (D-030).
+now drives the first semantic search before Opus is invoked (D-030). Bounded,
+session-scoped conversational follow-up questions are accepted as part of the
+core answering workflow, ahead of and independent of the Streamlit build
+(D-031).
 
 ## 2. Immediate next steps
 
-1. Implement the minimal Streamlit product path without adding another backend,
+1. Review the existing Streamlit mock direction with the user against the
+   newly accepted conversational-follow-up behaviour, before production
+   Streamlit implementation begins.
+2. Implement the minimal Streamlit product path without adding another backend,
    CLI, provider, or deployment target.
-2. Use the existing application workflows for preflight, indexing, snapshot
-   reuse, retrieval, answering, citations, and abstention; add only the tests
-   needed for the user-facing composition.
-3. Condense the public README and evaluation presentation around the final
+3. Use the existing application workflows for preflight, indexing, snapshot
+   reuse, retrieval, answering, citations, and abstention, including the
+   bounded conversational-follow-up context; add only the tests needed for
+   the user-facing composition.
+4. Condense the public README and evaluation presentation around the final
    measured results, run the final verification once, and close the MVP.
 
 ## 3. Milestones
@@ -262,6 +293,8 @@ Deliverables:
 - explicit indexing confirmation and phase-level progress;
 - ready-index reuse and manual rebuild choice;
 - Streamlit as the only user-facing interface;
+- bounded conversational follow-up questions in the local UI, scoped to the
+  current browser session and the one active repository snapshot;
 - concise public README;
 - architecture diagram;
 - representative query examples;

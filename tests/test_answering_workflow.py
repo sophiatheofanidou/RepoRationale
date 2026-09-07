@@ -27,6 +27,8 @@ from reporationale.application.answering_workflow import (
 from reporationale.domain.answering import (
     AnsweredOutcome,
     CitedReference,
+    ConversationContext,
+    ConversationTurn,
     FinalAnswer,
     FinalInsufficientEvidence,
     InsufficientEvidenceOutcome,
@@ -94,6 +96,8 @@ class _FakeModel:
     def __init__(self, turns: list[ModelTurn]) -> None:
         self._turns: Iterator[ModelTurn] = iter(turns)
         self.initial_evidence: tuple[RankedEvidence, ...] | None = None
+        self.received_context: ConversationContext | None = None
+        self.received_question: str | None = None
 
     def start(
         self,
@@ -101,8 +105,11 @@ class _FakeModel:
         question: str,
         evidence: tuple[RankedEvidence, ...],
         search_available: bool,
+        context: ConversationContext | None = None,
     ) -> ModelTurn:
         self.initial_evidence = evidence
+        self.received_context = context
+        self.received_question = question
         return next(self._turns)
 
     def submit_evidence(
@@ -388,6 +395,7 @@ def test_hard_maximum_enforces_exactly_three_searches() -> None:
             question: str,
             evidence: tuple[RankedEvidence, ...],
             search_available: bool,
+            context: ConversationContext | None = None,
         ) -> ModelTurn:
             action = SearchRequested(
                 query=f"query-{self._next_query_index}",
@@ -416,3 +424,192 @@ def test_hard_maximum_enforces_exactly_three_searches() -> None:
 
     assert search.calls == [initial_question, "query-2", "query-3"]
     assert MAX_SEARCH_CALLS == 3
+
+
+def test_omitted_context_reaches_model_as_none() -> None:
+    evidence_id = "github:octo-org/example-repo:markdown:a.md:chunk:0"
+    search = _FakeSearchHistory(
+        {"A question?": (_evidence(evidence_id, text="Some text."),)}
+    )
+    model = _FakeModel(
+        [
+            ModelTurn(
+                action=FinalAnswer(
+                    answer="Some text. [1]",
+                    citations=(CitedReference(evidence_id=evidence_id),),
+                ),
+                input_tokens=1,
+                output_tokens=1,
+            )
+        ]
+    )
+
+    answer_question(
+        "A question?", search_history=search, model=model, clock=_make_clock()
+    )
+
+    assert model.received_context is None
+
+
+def test_context_reaches_model_on_initial_turn_without_altering_first_search() -> None:
+    evidence_id = "github:octo-org/example-repo:markdown:webhooks.md:chunk:0"
+    search = _FakeSearchHistory(
+        {
+            "Was that alternative reconsidered later?": (
+                _evidence(
+                    evidence_id, text="Webhooks were reconsidered and rejected again."
+                ),
+            )
+        }
+    )
+    context = ConversationContext(
+        turns=(
+            ConversationTurn(
+                question="Why was polling chosen instead of webhooks?",
+                outcome="answered",
+                response="The history documents unreliable webhook delivery.",
+            ),
+        )
+    )
+    model = _FakeModel(
+        [
+            ModelTurn(
+                action=FinalAnswer(
+                    answer="Webhooks were reconsidered and rejected again. [1]",
+                    citations=(CitedReference(evidence_id=evidence_id),),
+                ),
+                input_tokens=5,
+                output_tokens=5,
+            ),
+        ]
+    )
+
+    result = answer_question(
+        "Was that alternative reconsidered later?",
+        search_history=search,
+        model=model,
+        context=context,
+        clock=_make_clock(),
+    )
+
+    assert isinstance(result.outcome, AnsweredOutcome)
+    # The exact, non-blank current question drives the first search -- never
+    # a concatenation or rewrite that folds in the prior conversation.
+    assert search.calls == ["Was that alternative reconsidered later?"]
+    assert model.received_context == context
+    assert model.received_question == "Was that alternative reconsidered later?"
+
+
+def test_context_aware_refinement_resolves_ambiguous_follow_up_within_search_limit() -> (
+    None
+):
+    first_id = "github:octo-org/example-repo:markdown:general.md:chunk:0"
+    second_id = "github:octo-org/example-repo:markdown:webhooks.md:chunk:0"
+    search = _FakeSearchHistory(
+        {
+            "Was that alternative reconsidered later?": (
+                _evidence(first_id, text="An unrelated later change."),
+            ),
+            "was webhooks reconsidered after being rejected for polling?": (
+                _evidence(
+                    second_id,
+                    text="Webhooks were reconsidered in 2025 and rejected again.",
+                ),
+            ),
+        }
+    )
+    context = ConversationContext(
+        turns=(
+            ConversationTurn(
+                question="Why was polling chosen instead of webhooks?",
+                outcome="answered",
+                response="The history documents unreliable webhook delivery.",
+            ),
+        )
+    )
+    model = _FakeModel(
+        [
+            ModelTurn(
+                action=SearchRequested(
+                    query="was webhooks reconsidered after being rejected for polling?",
+                    missing_information=(
+                        "whether webhooks specifically were reconsidered"
+                    ),
+                ),
+                input_tokens=1,
+                output_tokens=1,
+            ),
+            ModelTurn(
+                action=FinalAnswer(
+                    answer="Webhooks were reconsidered in 2025 and rejected again. [1]",
+                    citations=(CitedReference(evidence_id=second_id),),
+                ),
+                input_tokens=1,
+                output_tokens=1,
+            ),
+        ]
+    )
+
+    result = answer_question(
+        "Was that alternative reconsidered later?",
+        search_history=search,
+        model=model,
+        context=context,
+        clock=_make_clock(),
+    )
+
+    assert isinstance(result.outcome, AnsweredOutcome)
+    assert search.calls == [
+        "Was that alternative reconsidered later?",
+        "was webhooks reconsidered after being rejected for polling?",
+    ]
+    assert result.trace.total_search_count == 2
+    assert result.trace.total_search_count <= MAX_SEARCH_CALLS
+
+
+def test_citation_referring_only_to_prior_conversation_is_rejected() -> None:
+    prior_evidence_id = "github:octo-org/example-repo:markdown:webhooks.md:chunk:0"
+    current_evidence_id = "github:octo-org/example-repo:markdown:polling.md:chunk:0"
+    search = _FakeSearchHistory(
+        {
+            "Was that alternative reconsidered later?": (
+                _evidence(
+                    current_evidence_id, text="Polling remained the chosen approach."
+                ),
+            )
+        }
+    )
+    context = ConversationContext(
+        turns=(
+            ConversationTurn(
+                question="Why was polling chosen instead of webhooks?",
+                outcome="answered",
+                response="The history documents unreliable webhook delivery.",
+            ),
+        )
+    )
+    # The model cites an evidence ID that only ever appeared in the prior
+    # turn's (unavailable) evidence, never returned by this run's search --
+    # a prior generated answer must never silently become this run's
+    # evidence.
+    model = _FakeModel(
+        [
+            ModelTurn(
+                action=FinalAnswer(
+                    answer="Webhooks were reconsidered. [1]",
+                    citations=(CitedReference(evidence_id=prior_evidence_id),),
+                ),
+                input_tokens=1,
+                output_tokens=1,
+            ),
+        ]
+    )
+
+    with pytest.raises(UnknownCitationEvidenceError):
+        answer_question(
+            "Was that alternative reconsidered later?",
+            search_history=search,
+            model=model,
+            context=context,
+            clock=_make_clock(),
+        )

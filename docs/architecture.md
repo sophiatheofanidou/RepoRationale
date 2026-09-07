@@ -1,7 +1,7 @@
 # RepoRationale — Architecture
 
 **Status:** Approved for MVP  
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 
 This document explains how RepoRationale is built: how repository history
 becomes searchable evidence, how a user question becomes a cited answer, which
@@ -198,10 +198,12 @@ Once a snapshot is ready, each question follows this workflow:
 ```mermaid
 flowchart LR
     Question[User question]
+    Context[Session conversation context<br/>optional, at most 3 prior turns]
     Question --> Search[Exact-question semantic search]
     Search --> Index[Search vector index]
     Index --> Evidence[Return ranked evidence]
     Evidence --> Agent[Answering agent]
+    Context --> Agent
     Agent --> Assess{Evidence sufficient?}
     Assess -->|No, attempts remain| Refine[refine_search tool]
     Refine --> Index
@@ -211,12 +213,25 @@ flowchart LR
 ```
 
 - **User question:** the natural-language rationale question entered in the UI.
+- **Session conversation context:** an optional, provider-neutral list of at
+  most the three most recent completed turns of the current session, oldest
+  to newest, each carrying only a prior question and its resulting answer or
+  insufficient-evidence explanation. It reaches the answering agent only,
+  never the exact-question search, and never carries citation excerpts, raw
+  retrieved evidence, execution traces, provider messages, token usage, or
+  SDK objects. It is not repository evidence.
 - **Exact-question semantic search:** the application sends the user's unchanged
   question through Voyage and the active Chroma index before invoking the
-  answering model.
-- **Answering agent:** evaluates whether the returned evidence answers the actual
-  question. It never explores the repository directly and formulates a new query
-  only when the first results leave a specific information gap.
+  answering model. Session conversation context, when supplied, never
+  changes this query.
+- **Answering agent:** evaluates whether the returned evidence answers the
+  actual question. It never explores the repository directly and formulates
+  a new query only when the first results leave a specific information gap;
+  when conversation context is present, it may use that context only to
+  resolve references, ellipsis, or topic in the current question, and a
+  context-resolved refinement is still bounded by the same three-search
+  limit. A prior generated answer is never treated as evidence for the
+  current one.
 - **`refine_search` tool:** the agent's only tool able to request another search.
   It accepts a text query and a required missing-information explanation, and
   exposes no source, author, date, state, or repository-item filters.
@@ -246,7 +261,12 @@ search itself, then the answering provider returns only one typed action at a
 time: request a refinement, provide a final answer with selected evidence IDs,
 or report insufficient evidence. Every completed search receives an explicit
 sufficiency assessment, and a fourth search request is rejected without being
-executed.
+executed. The workflow also accepts an optional session conversation context
+of at most three completed prior turns; an omitted or empty context preserves
+single-question behaviour exactly, and citation validation is unaffected — a
+citation is accepted only when its evidence ID was returned by
+`search_history`/`refine_search` during the current run, so an ID that
+appeared only in a prior turn's answer remains rejected.
 
 The Anthropic adapter owns the Claude message history and translates the
 standard tool-use and tool-result exchange into those application actions. It
@@ -260,6 +280,22 @@ currently offered; extended thinking is
 explicitly disabled so no supported model substitutes a `thinking` block for
 that required call. Provider response objects and citation metadata never
 cross the adapter boundary.
+
+Each answering run constructs a fresh Anthropic adapter instance; its
+internal Claude message history is never reused across separate questions,
+so a later question can only be informed by an earlier one through the
+explicit conversation-context argument, never through provider-side memory.
+When conversation context is supplied, the adapter serializes it into a
+distinctly labelled, explicitly non-evidentiary section of the first user
+message, ahead of the current question and that turn's initial search
+evidence, and the system prompt states plainly that prior questions and
+generated answers may be used only to resolve references and topic, never
+cited or restated as support for the current answer. Selecting which
+completed turns to supply as context, and resetting that context on a
+browser refresh, a new session, an application restart, or a repository or
+snapshot change, belongs entirely to the Streamlit caller; the answering
+workflow and Anthropic adapter remain session- and repository-agnostic and
+persist no conversation state themselves.
 
 For an answered result, the workflow resolves numbered citations from the
 accumulated evidence rather than trusting model-supplied titles, links, or

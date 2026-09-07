@@ -34,6 +34,18 @@ even when the model can explain what the evidence actually shows. The former
 first-query prompt mitigation was replaced by a deterministic application
 search after held-out diagnostics showed that a near-paraphrase could still
 discard useful wording.
+
+`start()` accepts an optional `ConversationContext` of at most the three
+most recent completed turns of the current session. When present, its
+`_conversation_context_block` is serialized into a distinctly labelled,
+clearly non-evidentiary section of the single first user message, ahead of
+the current question and that turn's initial search evidence -- never
+merged into either. `_BASE_SYSTEM_PROMPT` states explicitly that prior
+questions and generated answers may resolve references and topic only and
+must never be cited or restated as evidence for the current answer; the
+existing citation validation in `answering_workflow` independently
+guarantees this, since it resolves and checks citations only against
+evidence this run actually returned from `search_history`/`refine_search`.
 """
 
 import json
@@ -45,6 +57,7 @@ from pydantic import ValidationError
 
 from reporationale.domain.answering import (
     CitedReference,
+    ConversationContext,
     FinalAnswer,
     FinalInsufficientEvidence,
     ModelTurn,
@@ -140,6 +153,20 @@ _BASE_SYSTEM_PROMPT = (
     "the user's exact question and supplied those results. Assess that evidence "
     "before deciding whether to answer, report insufficient evidence, or request "
     "a narrower refinement.\n\n"
+    "You may also be given prior conversation context: earlier questions "
+    "from this same session and the answers or explanations they produced. "
+    "Use that context only to resolve references, ellipsis, or the topic of "
+    'the current question -- for example, understanding what "that '
+    'alternative" or "it" refers to. Prior questions and previously '
+    "generated answers are not repository evidence: never cite them, never "
+    "restate a prior answer's claim to support the current one, and never "
+    "treat something a prior answer said as if it were retrieved evidence "
+    "for this run. You may cite only evidence returned by a search executed "
+    "during this run. If this run's searches do not support the current "
+    "question, refine the search or call report_insufficient_evidence -- do "
+    "not fall back on a prior answer to fill the gap. Answer only the "
+    "current question; do not repeat, summarize, or re-answer the whole "
+    "conversation.\n\n"
     "Preserve the evidence's own certainty. If a source uses a hedge such "
     'as "maybe", "might", "could", or "probably", or phrases '
     "something as a question, keep that same uncertainty in your answer "
@@ -425,6 +452,29 @@ def _parse_action(
     raise AnthropicAnswerError(f"the model called unknown tool {tool_use.name!r}")
 
 
+def _conversation_context_block(context: ConversationContext | None) -> str:
+    """The optional, clearly labelled non-evidentiary section prefixed to
+    the first user message. Empty (and so entirely absent from the
+    message) whenever `context` is `None` or carries no turns, so an
+    omitted or empty context reproduces the established single-question
+    message exactly."""
+    if context is None or not context.turns:
+        return ""
+    turns = [
+        {
+            "question": turn.question,
+            "outcome": turn.outcome,
+            "response": turn.response,
+        }
+        for turn in context.turns
+    ]
+    return (
+        "Prior conversation context (JSON, oldest to newest; NOT evidence -- "
+        "use only to resolve references, ellipsis, or topic; never cite or "
+        "restate as support for the current answer):\n" + json.dumps(turns) + "\n\n"
+    )
+
+
 def _evidence_context(evidence: RankedEvidence) -> dict[str, object]:
     chunk = evidence.chunk
     return {
@@ -470,12 +520,13 @@ class AnthropicAnsweringAdapter:
         question: str,
         evidence: tuple[RankedEvidence, ...],
         search_available: bool,
+        context: ConversationContext | None = None,
     ) -> ModelTurn:
         self._messages = [
             {
                 "role": "user",
                 "content": (
-                    f"Question:\n{question}\n\n"
+                    _conversation_context_block(context) + f"Question:\n{question}\n\n"
                     "Initial search results (JSON):\n"
                     + json.dumps([_evidence_context(result) for result in evidence])
                 ),

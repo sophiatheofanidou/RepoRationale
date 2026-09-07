@@ -16,6 +16,15 @@ Protocol, whose real implementation lives in
 failure raised here is never converted into an `insufficient_evidence`
 product outcome; it propagates so the caller can distinguish "retrieval
 found nothing supportive" from "the provider or agent loop broke".
+
+An optional `ConversationContext` of at most the three most recent completed
+turns of the current session may accompany a follow-up question. It reaches
+the model only on the first turn, alongside the current question and that
+turn's evidence, and is never concatenated into the first search query: the
+mandatory first search still runs on the user's exact, unmodified question.
+This module is otherwise session- and repository-agnostic; owning session
+state, clearing context on repository or snapshot change, and persistence
+remain entirely the caller's responsibility.
 """
 
 import re
@@ -29,6 +38,7 @@ from reporationale.domain.answering import (
     AnswerOutcome,
     Citation,
     CitedReference,
+    ConversationContext,
     FinalAnswer,
     FinalInsufficientEvidence,
     InsufficientEvidenceOutcome,
@@ -44,10 +54,12 @@ from reporationale.domain.retrieval import RankedEvidence
 # UI setting (see the accepted bounded tool-calling decision).
 MAX_SEARCH_CALLS = 3
 
-# Bumped to /3 when the exact user question replaced the model-generated first
-# query. The total three-search budget and the two final outcome shapes remain
-# unchanged.
-AGENT_VERSION = "answering-workflow/3"
+# Bumped to /4 when an optional session-scoped `ConversationContext` was
+# added to the provider-visible first turn. The total three-search budget,
+# exact-question first search, and the two final outcome shapes remain
+# unchanged; an empty or omitted context preserves prior request/result
+# semantics exactly.
+AGENT_VERSION = "answering-workflow/4"
 
 Clock = Callable[[], float]
 
@@ -90,8 +102,9 @@ class SearchHistoryCapability(Protocol):
 
 class AnsweringModel(Protocol):
     """The narrow answering-model boundary this workflow depends on: one
-    turn to start the run from the user's question, and one turn to submit
-    retrieved evidence and get the next action. Satisfied structurally by
+    turn to start the run from the user's question and optional prior
+    conversation context, and one turn to submit retrieved evidence and get
+    the next action. Satisfied structurally by
     `reporationale.adapters.anthropic_answering.AnthropicAnsweringAdapter`
     and by any fake test double."""
 
@@ -104,6 +117,7 @@ class AnsweringModel(Protocol):
         question: str,
         evidence: tuple[RankedEvidence, ...],
         search_available: bool,
+        context: ConversationContext | None,
     ) -> ModelTurn: ...
 
     def submit_evidence(
@@ -169,19 +183,27 @@ def answer_question(
     *,
     search_history: SearchHistoryCapability,
     model: AnsweringModel,
+    context: ConversationContext | None = None,
     clock: Clock = time.monotonic,
 ) -> AnsweringRunResult:
     """Answer one rationale question through the bounded agent loop.
 
     Rejects a blank `question`. Executes the first search deterministically
-    with the user's exact question, then lets the model answer, abstain, or
-    request a narrower refinement. Executes at most `MAX_SEARCH_CALLS` searches, and
-    requires an explicit sufficiency assessment after every one before
-    either final outcome is reachable. Stops as soon as evidence is
-    assessed sufficient; after the third search, `search_available=False`
-    withholds the search tool from the final turn, and a further search
-    request at that point is a typed `AnsweringProtocolError` rather than a
-    fourth executed search.
+    with the user's exact question -- never a concatenation or rewrite of
+    `context` -- then lets the model answer, abstain, or request a narrower
+    refinement. Executes at most `MAX_SEARCH_CALLS` searches, and requires
+    an explicit sufficiency assessment after every one before either final
+    outcome is reachable. Stops as soon as evidence is assessed sufficient;
+    after the third search, `search_available=False` withholds the search
+    tool from the final turn, and a further search request at that point is
+    a typed `AnsweringProtocolError` rather than a fourth executed search.
+
+    `context` carries at most the three most recent completed turns of the
+    current session and reaches the model only on its first turn, alongside
+    the current question and that first search's evidence; an omitted or
+    empty context preserves single-question behaviour exactly. It is never
+    used to alter the first search query and never becomes citable evidence
+    for the current run.
     """
     _require_non_blank_question(question)
 
@@ -221,6 +243,7 @@ def answer_question(
                     question=question,
                     evidence=evidence,
                     search_available=search_available,
+                    context=context,
                 )
             )
             first_search = False

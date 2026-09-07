@@ -1,6 +1,6 @@
 # RepoRationale — Decision Log
 
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-08
 
 This file records important product and engineering decisions and the reasons
 behind them. It is intentionally a single lightweight log rather than a folder
@@ -1219,3 +1219,103 @@ refinement, records a sufficiency assessment for every search, and validates
 citations against all evidence returned during the run. The diagnostic is
 evidence for this orchestration correction, not a replacement held-out run or
 a statistically powered model comparison.
+
+## D-031 — Support bounded, session-scoped conversational follow-ups
+
+- **Status:** Accepted
+- **Date:** 2026-09-08
+
+### Context
+
+Rationale questions within one investigation are rarely fully independent. A
+user who has just been told why polling was chosen instead of webhooks
+naturally continues with "was that alternative reconsidered later?" rather
+than restating the rejected alternative by name. The single-question design
+established by D-030 answers such a follow-up literally: its exact,
+unresolved pronoun becomes the mandatory first search, and the run has no way
+to know what "that" refers to.
+
+Two extremes were considered and rejected. Showing the visible chat history in
+the Streamlit UI without passing any of it to the answering model would leave
+the interface implying a continuous conversation while the model still
+treated every question in isolation; a pronoun-based follow-up would
+routinely fail to resolve, undermining the affordance the history display
+suggests. At the other extreme, durable or unbounded conversational memory —
+persisted across sessions, carried across repositories, or treated as
+reusable evidence for later claims — would reopen the bounded-agent and
+evidence-only-citation constraints already accepted in D-004, D-005, and
+D-010, and risks the system drifting toward a general-purpose chatbot rather
+than a bounded rationale-retrieval tool.
+
+The accepted design instead threads a small, explicitly non-evidentiary
+context object through the existing bounded agent loop. The implementation
+was independently reviewed against its actual diff and automated tests, then
+validated by one approved live diagnostic against the completed Gson index.
+The diagnostic's ambiguous follow-up ("did it have any other benefit?", after
+a prior turn about marking Gson classes `final`) retrieved unrelated evidence
+on the mandatory exact-question first search; Claude used the supplied
+conversation context to request one standalone, context-resolved
+`refine_search` call, which retrieved the expected design-document passage
+and a related historical issue, producing a fully grounded `answered`
+outcome with citations returned only during that run. The run used 2
+searches, 2 Anthropic calls, 8,308/474 input/output tokens, about 12.92
+seconds, and an estimated `$0.05339` Anthropic list-price cost, with zero
+malformed or unauthorized citations and no retry.
+
+### Decision
+
+Add a small provider-neutral `ConversationContext` of at most the three most
+recent completed turns of the current session, ordered oldest to newest. Each
+turn carries only the prior question, whether that turn's outcome was
+`answered` or `insufficient_evidence`, and the resulting answer or abstention
+explanation text — never citation excerpts, raw retrieved evidence, execution
+traces, provider messages, token usage, or SDK objects. An omitted or empty
+context preserves the established single-question behaviour exactly.
+
+`answer_question()` accepts this context as an optional argument and passes
+it to the answering provider only on the first model turn, alongside the
+current question and that turn's initial search evidence, in a structure the
+Anthropic adapter labels clearly as non-evidentiary. The mandatory first
+semantic search established by D-030 is unchanged: it still uses the user's
+exact, unmodified current question, never a concatenation or rewrite that
+folds in prior turns. After seeing that evidence, Claude may use the supplied
+context only to resolve references, ellipsis, or the topic of the current
+question, and may request a standalone, context-resolved `refine_search`
+query within the existing three-search maximum; it may not cite a prior
+turn's content or treat a prior answer as evidence for the current one.
+Citation validation is unchanged from D-005: only evidence IDs actually
+returned by `search_history`/`refine_search` during the current run are
+valid, so an ID that appeared only in a prior turn's answer or citations
+remains rejected.
+
+Session ownership stays entirely with the future Streamlit caller, per D-013.
+It selects at most the three most recent completed turns from whatever
+longer visible chat history it retains and supplies them as context; it
+starts a fresh conversation on a browser refresh, a new browser session or
+tab, an application restart, a change of repository or snapshot, or an
+explicit future "New investigation" action. No conversation turn is written
+to the local snapshot, manifest, or any other persisted artifact; only the
+completed repository index remains locally persistent and reusable,
+unaffected by this decision. The answering workflow and Anthropic adapter
+remain session- and repository-agnostic; each answering run still constructs
+a fresh adapter instance whose Claude message history is never reused across
+separate questions.
+
+The answering workflow and agent version is bumped to `answering-workflow/4`
+to reflect this change to the provider-visible first turn. The three-search
+budget, the exact-question first search, and the two structured final
+outcome shapes are unchanged.
+
+### Consequences
+
+A user can ask a natural pronoun-based or topically continuous follow-up
+within one session and one repository snapshot without restating prior
+context by hand, while every answer — including a follow-up's — remains
+grounded only in evidence retrieved during its own run. The Streamlit layer,
+not yet implemented, must select and reset context according to the
+boundaries above; the evaluation harness and the frozen held-out result are
+unaffected, since conversation context is optional and this MVP's reviewed
+question set exercises single-question cases. This is bounded session-scoped
+follow-up support, not durable chat history, cross-repository memory, or
+general-purpose conversational memory, and must not be broadened without a
+further reviewed decision.

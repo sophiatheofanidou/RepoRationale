@@ -21,6 +21,7 @@ from reporationale.application.evaluation_runner import (
 from reporationale.domain.answering import (
     AnsweredOutcome,
     CitedReference,
+    ConversationContext,
     FinalAnswer,
     FinalInsufficientEvidence,
     InsufficientEvidenceOutcome,
@@ -129,6 +130,7 @@ class _FakeModel:
         question: str,
         evidence: tuple[RankedEvidence, ...],
         search_available: bool,
+        context: ConversationContext | None = None,
     ) -> ModelTurn:
         return next(self._turns)
 

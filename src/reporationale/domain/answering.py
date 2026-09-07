@@ -16,6 +16,12 @@ A model may cite evidence only by `evidence_id` (`CitedReference`); it is
 never trusted to invent or restate citation metadata or excerpts. The
 workflow resolves every `Citation`'s remaining fields deterministically from
 the `RankedEvidence` actually accumulated during the current run.
+
+`ConversationContext` is the separate, optional contract for session-scoped
+conversational follow-ups: at most the three most recent completed turns,
+carrying only a prior question and its answer/explanation text. It is
+context for resolving a follow-up's references, never repository evidence,
+and does not affect the mandatory exact-question first search.
 """
 
 from typing import Literal
@@ -169,6 +175,64 @@ class InsufficientEvidenceOutcome(BaseModel):
 
 
 AnswerOutcome = AnsweredOutcome | InsufficientEvidenceOutcome
+
+
+class ConversationTurn(BaseModel):
+    """One completed prior turn, held as session-scoped conversational
+    context for a follow-up question: the prior question, whether it was
+    `answered` or `insufficient_evidence`, and that outcome's answer or
+    explanation text.
+
+    Deliberately excludes citation excerpts, raw retrieved evidence,
+    execution traces, provider messages, token usage, and SDK objects: a
+    prior generated answer is context for resolving a follow-up's
+    references, never repository evidence in its own right.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question: str = Field(min_length=1)
+    outcome: Literal["answered", "insufficient_evidence"]
+    response: str = Field(min_length=1)
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value: str) -> str:
+        return _require_non_blank(value)
+
+    @field_validator("response")
+    @classmethod
+    def response_must_not_be_blank(cls, value: str) -> str:
+        return _require_non_blank(value)
+
+    @classmethod
+    def from_outcome(
+        cls, *, question: str, outcome: AnswerOutcome
+    ) -> "ConversationTurn":
+        """Build a completed turn from one finished `AnswerOutcome` -- the
+        shape a caller (the future Streamlit layer) already holds after
+        each answering run, so it need not restate `outcome`/`response`
+        by hand."""
+        if isinstance(outcome, AnsweredOutcome):
+            return cls(question=question, outcome="answered", response=outcome.answer)
+        return cls(
+            question=question,
+            outcome="insufficient_evidence",
+            response=outcome.explanation,
+        )
+
+
+class ConversationContext(BaseModel):
+    """At most the three most recent completed turns of the current
+    session, ordered oldest to newest, available to the answering model
+    only to resolve references, ellipsis, or topic in a follow-up
+    question. An empty context (the default) preserves the established
+    single-question behaviour.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    turns: tuple[ConversationTurn, ...] = Field(default=(), max_length=3)
 
 
 class SearchRecord(BaseModel):

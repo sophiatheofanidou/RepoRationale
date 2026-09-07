@@ -8,7 +8,7 @@ written into the repository.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -46,6 +46,7 @@ from reporationale.domain.evaluation import (
     ExpectedSource,
     IndexingMeasurement,
     MeasurementLimitation,
+    PricingBasis,
     RetrievalCaseResult,
     RetrievalQueryUsage,
     RunManifest,
@@ -97,6 +98,7 @@ def _manifest(
     resolved_commit_sha: str = _COMMIT_SHA,
     question_set_version: int = 1,
     split: str = "development",
+    pricing_bases: tuple[PricingBasis, ...] = (),
 ) -> RunManifest:
     return RunManifest(
         run_manifest_schema_version=2,
@@ -112,6 +114,7 @@ def _manifest(
         retrieval_result_limit=5,
         question_set_version=question_set_version,
         split=split,
+        pricing_bases=pricing_bases,
     )
 
 
@@ -474,6 +477,53 @@ def test_load_evaluation_run_rejects_query_usage_tampered_after_publish(
     _rewrite_json_file(
         target / "query-usage.json",
         lambda data: data.__setitem__("query_embedding_request_count", 99),
+    )
+    with pytest.raises(EvaluationRunCorrupted):
+        load_evaluation_run(target, question_set=_question_set())
+
+
+def test_publish_and_load_round_trip_persists_pricing_basis(tmp_path: Path) -> None:
+    """A recorded price basis is its own field on the manifest and must
+    reload exactly as published, with the report rendering it."""
+    pricing_bases = (
+        PricingBasis(
+            provider="anthropic",
+            model="claude-opus-5",
+            input_price_per_million_usd=5.0,
+            output_price_per_million_usd=25.0,
+            verified_on=date(2026, 9, 7),
+        ),
+    )
+    target = _publish(tmp_path, manifest=_manifest(pricing_bases=pricing_bases))
+
+    loaded = load_evaluation_run(target, question_set=_question_set())
+    assert loaded.manifest.pricing_bases == pricing_bases
+    assert "## Pricing basis" in loaded.report_markdown
+    assert "claude-opus-5" in loaded.report_markdown
+
+
+def test_load_evaluation_run_rejects_pricing_basis_tampered_after_publish(
+    tmp_path: Path,
+) -> None:
+    """Tampering with the persisted manifest's `pricing_bases` after
+    publication must be caught on reload: the recomputed report reflects
+    the tampered price basis and therefore no longer matches the
+    persisted report."""
+    pricing_bases = (
+        PricingBasis(
+            provider="anthropic",
+            model="claude-opus-5",
+            input_price_per_million_usd=5.0,
+            output_price_per_million_usd=25.0,
+            verified_on=date(2026, 9, 7),
+        ),
+    )
+    target = _publish(tmp_path, manifest=_manifest(pricing_bases=pricing_bases))
+    _rewrite_json_file(
+        target / "run-manifest.json",
+        lambda data: data["pricing_bases"][0].__setitem__(
+            "output_price_per_million_usd", 999.0
+        ),
     )
     with pytest.raises(EvaluationRunCorrupted):
         load_evaluation_run(target, question_set=_question_set())

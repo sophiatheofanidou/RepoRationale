@@ -32,7 +32,7 @@ counts, timings, and cost estimates.
 
 import math
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -490,6 +490,57 @@ class AnswerAggregateMetrics(BaseModel):
         return _require_nonnegative_int_values(value)
 
 
+# --- Price basis ------------------------------------------------------------
+
+
+class PricingBasis(BaseModel):
+    """The exact provider price basis a run's cost estimates were computed
+    from: the per-million-token input rate, the date it was checked
+    against the provider's own current pricing immediately before
+    execution, and an optional per-million-token output rate.
+    `output_price_per_million_usd` is `None` for a provider whose billable
+    unit has no separate output rate -- for example Voyage embeddings,
+    which charge only for input tokens and produce no billable output
+    tokens at all, unlike Anthropic's generation models, which charge
+    separately for both. Treating that as a `0.0` output rate would
+    misrepresent embedding pricing as if output were merely free rather
+    than nonexistent as a billable concept.
+
+    Distinct from the already-computed `estimated_*_cost_usd` fields
+    elsewhere in this module -- this is the rate an estimate was derived
+    from, not the estimate itself, so a report reader is never left
+    guessing what $/token figure produced a given dollar amount, and a
+    reader can tell whether a recorded cost is still consistent with the
+    provider's current published price."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    input_price_per_million_usd: float = Field(ge=0)
+    output_price_per_million_usd: float | None = Field(default=None, ge=0)
+    verified_on: date
+
+    @field_validator("provider", "model")
+    @classmethod
+    def must_not_be_blank(cls, value: str) -> str:
+        return _require_non_blank(value)
+
+    @field_validator("input_price_per_million_usd")
+    @classmethod
+    def input_price_must_be_finite(cls, value: float) -> float:
+        return _require_finite(value)
+
+    @field_validator("output_price_per_million_usd")
+    @classmethod
+    def output_price_must_be_finite_when_present(
+        cls, value: float | None
+    ) -> float | None:
+        if value is not None:
+            _require_finite(value)
+        return value
+
+
 # --- Aggregate run summary and reproducible run manifest -------------------
 
 
@@ -564,6 +615,7 @@ class RunManifest(BaseModel):
     answering_model: str | None = None
     agent_version: str | None = None
     library_versions: dict[str, str] = Field(default_factory=dict)
+    pricing_bases: tuple[PricingBasis, ...] = Field(default_factory=tuple)
 
     @field_validator("created_at")
     @classmethod
@@ -589,3 +641,15 @@ class RunManifest(BaseModel):
         if value is not None:
             _require_non_blank(value)
         return value
+
+    @model_validator(mode="after")
+    def pricing_bases_must_not_repeat_a_provider_model_pair(self) -> "RunManifest":
+        seen: set[tuple[str, str]] = set()
+        for basis in self.pricing_bases:
+            key = (basis.provider, basis.model)
+            if key in seen:
+                raise ValueError(
+                    f"pricing_bases repeats provider/model pair {key!r}"
+                )
+            seen.add(key)
+        return self

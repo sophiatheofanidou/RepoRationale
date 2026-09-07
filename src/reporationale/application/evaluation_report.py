@@ -71,6 +71,25 @@ def render_markdown_report(
     lines.append(f"- **Command:** `{manifest.command}`")
     lines.append("")
 
+    if manifest.pricing_bases:
+        lines.append("## Pricing basis")
+        lines.append("")
+        lines.append("| Provider | Model | Input $/MTok | Output $/MTok | Verified on |")
+        lines.append("| --- | --- | ---: | ---: | --- |")
+        for basis in manifest.pricing_bases:
+            output_price = (
+                f"{basis.output_price_per_million_usd:.2f}"
+                if basis.output_price_per_million_usd is not None
+                else "n/a"
+            )
+            lines.append(
+                f"| {basis.provider} | {basis.model} "
+                f"| {basis.input_price_per_million_usd:.2f} "
+                f"| {output_price} "
+                f"| {basis.verified_on.isoformat()} |"
+            )
+        lines.append("")
+
     lines.append("## Indexing")
     lines.append("")
     lines.append(f"- GitHub requests: {indexing.github_request_count}")

@@ -461,6 +461,58 @@ Sonnet 5; and the broader held-out evaluation with a reviewed question set
 remains the next stage of work. The selected model is recorded in the project
 decision log.
 
+### Gson development end-to-end answering pilot
+
+The selected `claude-opus-5` model then ran once on each of the four Gson
+development cases against the existing vector index. All cases completed
+without retry or structural protocol failure. No held-out question was sent to
+Voyage or Anthropic, and the index was reopened without document embedding.
+
+| Measure | Result |
+| --- | ---: |
+| Correct binary outcome | 2/4 |
+| Anthropic calls | 13 |
+| Input/output tokens | 38,219 / 3,233 |
+| Estimated Anthropic cost | `$0.271920` |
+| Voyage query requests/tokens | 9 / 109 |
+| Estimated Voyage query cost | `$0.00000654` |
+| Mean end-to-end latency | 16.42 s |
+
+The cost estimate uses the standard global Opus 5 price verified on
+2026-09-07 (`$5` per million input tokens and `$25` per million output tokens).
+The result was above the `$0.20–$0.25` central estimate but within its
+conservative development range.
+
+Qualitative review found three different failure modes:
+
+- The direct checked-versus-unchecked-exception case exhausted three searches
+  without retrieving the design-document section that the unchanged user
+  question had ranked first in the earlier retrieval pilot. The model safely
+  abstained, but the expected-evidence retrieval miss made the binary outcome
+  incorrect and shows that its first query discarded useful wording.
+- The semantic-reword subclassing case retrieved the expected design section
+  on its first search and produced a supported cited answer.
+- The adapter-precedence case reached the correct `answered` outcome and cited
+  strong alternative evidence, but one historical explanation in the answer
+  converted a source's explicitly speculative “maybe” into a factual claim.
+  This is a substantive claim-support failure even though every citation ID
+  was valid and returned during the run.
+- The false Maven-to-Gradle premise was corrected using relevant retrieved
+  evidence, but the model returned `answered` rather than the predeclared
+  `insufficient_evidence` outcome. The answer itself was supported; the fixed
+  version-1 ground truth remains unchanged, so this is still an outcome miss
+  and exposes ambiguity that must be resolved in the binary-answer guidance
+  before held-out controls are run.
+
+This development run therefore validates the operational path but does not
+justify proceeding directly to held-out evaluation. The next development
+correction is prompt-level: preserve the user's distinguishing wording in the
+mandatory first query, retain uncertainty qualifiers from evidence, and use
+the existing `insufficient_evidence` outcome when the rationale premise itself
+is unsupported or contradicted. These changes preserve the accepted four-tool,
+three-search, two-outcome architecture and must be tested before any new paid
+run.
+
 ### Hard agent requirements
 
 These are pass/fail checks on every run:

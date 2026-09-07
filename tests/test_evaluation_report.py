@@ -1,6 +1,6 @@
 """Tests for the short, human-readable Markdown evaluation report."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from reporationale.application.evaluation_report import render_markdown_report
 from reporationale.domain.evaluation import (
@@ -10,6 +10,7 @@ from reporationale.domain.evaluation import (
     IndexingMeasurement,
     MeasurementLimitation,
     PhaseTiming,
+    PricingBasis,
     RetrievalQueryUsage,
     RetrieverAggregateMetrics,
     RunManifest,
@@ -189,6 +190,41 @@ def test_report_omits_measurement_limitations_section_when_none_are_known() -> N
         manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
     )
     assert "Measurement limitations:" not in report
+
+
+def test_report_omits_pricing_basis_section_when_none_are_recorded() -> None:
+    report = render_markdown_report(
+        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+    )
+    assert "## Pricing basis" not in report
+
+
+def test_report_shows_pricing_basis_when_recorded() -> None:
+    manifest = _manifest().model_copy(
+        update={
+            "pricing_bases": (
+                PricingBasis(
+                    provider="anthropic",
+                    model="claude-opus-5",
+                    input_price_per_million_usd=5.0,
+                    output_price_per_million_usd=25.0,
+                    verified_on=date(2026, 9, 7),
+                ),
+                PricingBasis(
+                    provider="voyage",
+                    model="voyage-4",
+                    input_price_per_million_usd=0.06,
+                    verified_on=date(2026, 9, 7),
+                ),
+            )
+        }
+    )
+    report = render_markdown_report(
+        manifest=manifest, indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+    )
+    assert "## Pricing basis" in report
+    assert "| anthropic | claude-opus-5 | 5.00 | 25.00 | 2026-09-07 |" in report
+    assert "| voyage | voyage-4 | 0.06 | n/a | 2026-09-07 |" in report
 
 
 def test_report_handles_missing_answer_metrics() -> None:

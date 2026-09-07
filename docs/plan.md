@@ -10,43 +10,42 @@ or a replacement for the product and architecture documents.
 
 ## 1. Current state
 
-**Active task:** Fix evaluation targets and prepare the Gson development answering run
-**Task status:** Ready
-**Last completed work:** The split-safe seven-file run contract and the approved
-Gson Voyage development experiment are complete. The corrected run records
-137 document requests and 2,965,021 tokens plus four query requests and 49
-tokens for a combined `$0.17790420` standard-list-price estimate. It reports
-the blank-commit measurement gap, retains an executable offline reproduction
-command, and reuses the complete 17,479-record vector index. Voyage improved
-development Hit@5 from 1/3 for BM25 to 2/3 and MRR@5 from 0.333 to 0.444; the
-fixed refinement diagnostic remained an exact-source miss. No held-out case or
-Anthropic model was called.
-**Verification performed:** Claude reported 668 passing full-suite tests and
-clean Ruff and mypy checks before its final private-runner edit, followed by
-130 focused tests and fresh Ruff and mypy checks. Codex reviewed the source
-diff and both run directories, independently ran all 130 focused evaluation
-tests, validated the private runner offline, reloaded the corrected run through
-the semantic loader (`development`, four split cases, six retrieval records,
-zero answer records, four query requests, 49 tokens), and ran targeted Ruff.
-Codex found and corrected three test-only typing issues missed by the handoff;
-strict mypy then passed across all 79 source files and the 57 directly affected
-tests passed.
+**Active task:** Correct answering behaviour exposed by the Gson development pilot
+**Task status:** Changes requested
+**Last completed work:** The split-safe Gson development answering run completed
+all four cases exactly once with `claude-opus-5`, 13 Anthropic calls, 38,219
+input tokens, 3,233 output tokens, and `$0.271920` estimated Anthropic cost.
+Nine Voyage query embeddings used 109 tokens for `$0.00000654`; no document
+embedding, GitHub call, retry, or held-out provider call occurred. The binary
+outcome score was 2/4. One case was a clean expected-evidence retrieval miss,
+one was a fully supported success, one contained a real claim-support defect
+despite valid citation provenance, and one gave a supported false-premise
+correction under the wrong predeclared binary outcome.
+**Verification performed:** Claude reported 683 passing tracked tests, 16
+passing private runner tests, clean Ruff and strict mypy, then published and
+reloaded the seven-file run. Codex reviewed all four raw traces against the
+version-1 ground truth and original normalized evidence, independently reloaded
+the run, and confirmed four development answers, 2/4 computed outcome accuracy,
+the recorded token/cost totals, nine query requests, and zero held-out results.
 **Known limitations or deviations:** The successful ingestion required
 run-specific limits above the product defaults; no permanent limit change has
 been accepted. Blank commit messages are valid Git data and are now excluded as
 non-rationale content, but the completed snapshot cannot reconstruct the exact
 count or identities skipped. The corrected indexing report discloses this
 measurement gap separately rather than claiming zero known limitations.
-**Open questions or blockers:** There is no remaining implementation blocker in
-the accepted retrieval slice. Numeric held-out success targets and the
-Anthropic development-run stop/cost ceiling must be fixed before any further
-paid call. The successful ingestion still used run-specific limits above the
-product defaults; no permanent limit change has been accepted.
-**Next action:** Codex proposes the held-out success targets and a bounded
-four-case Gson development-answering protocol using the selected
-`claude-opus-5`. After separate user approval of its exact Anthropic ceiling,
-Claude implements or runs that development-only stage against the existing
-index. Do not query held-out cases yet.
+**Open questions or blockers:** Held-out execution remains blocked until the
+development findings are addressed. The accepted binary product contract has
+no separate false-premise outcome, so prompt guidance must map an unsupported
+or contradicted rationale premise to `insufficient_evidence`. The mandatory
+first query should preserve the user's distinguishing wording, and answers must
+not promote tentative source language into fact. Numeric held-out targets must
+then be fixed before any held-out call. The successful ingestion still used
+run-specific limits above the product defaults; no permanent limit change has
+been accepted.
+**Next action:** Have Claude implement and test the three bounded prompt-level
+corrections without changing the four-tool, three-search, two-outcome contract.
+Codex reviews that diff before a separately approved second development-only
+run; do not query held-out cases.
 
 The project now has tested, repeatable ingestion, retrieval, and bounded
 agentic-answering foundations, including a completed and recorded Claude
@@ -72,13 +71,15 @@ external-service credentials (D-022). The earlier evaluation-corpus deferral
 
 ## 2. Immediate next steps
 
-1. Fix numeric held-out targets and the development-answering stop/cost
-   conditions from the completed retrieval pilot.
-2. Run only the four development cases through the bounded answering workflow
-   using the selected `claude-opus-5`, reusing the existing vector index.
-3. Review grounding, citations, abstention, refinement behaviour, latency, and
-   cost; make any justified development-only correction before freezing the
-   protocol.
+1. Implement and test development-only prompt guidance that preserves the
+   original question's distinguishing terms in the first query, preserves
+   source uncertainty, and treats an unsupported premise as
+   `insufficient_evidence`.
+2. After Codex review and separate cost approval, rerun the four development
+   cases once under a new agent/prompt version and compare against the recorded
+   first run without replacing it.
+3. Freeze numeric held-out targets and the corrected protocol from development
+   evidence.
 4. Request separate approval before the first held-out retrieval or answering
    call, then run the eight held-out cases exactly once without tuning against
    their results.

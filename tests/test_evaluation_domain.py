@@ -2,7 +2,7 @@
 validation, ground-truth invariants, and measurement/result record shapes.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from reporationale.domain.evaluation import (
     IndexingMeasurement,
     MeasurementLimitation,
     PhaseTiming,
+    PricingBasis,
     RetrievalCaseResult,
     RetrievalQueryUsage,
     RunManifest,
@@ -490,6 +491,188 @@ def test_run_manifest_rejects_invalid_split() -> None:
             question_set_version=1,
             split="not-a-real-split",
         )
+
+
+def test_run_manifest_pricing_bases_default_to_empty() -> None:
+    """A run manifest published before `pricing_bases` existed must still
+    load, with no pricing basis implied."""
+    manifest = RunManifest.model_validate(
+        {
+            "run_manifest_schema_version": 2,
+            "run_id": "run-1",
+            "created_at": datetime(2026, 9, 10, tzinfo=UTC).isoformat(),
+            "command": "uv run ...",
+            "repository": _IDENTITY.model_dump(mode="json"),
+            "resolved_commit_sha": _COMMIT_SHA,
+            "source_schema_version": 1,
+            "chunk_schema_version": 1,
+            "chunker_algorithm_version": 1,
+            "max_chars": 2000,
+            "retrieval_result_limit": 5,
+            "question_set_version": 1,
+            "split": "development",
+        }
+    )
+    assert manifest.pricing_bases == ()
+
+
+def test_run_manifest_round_trips_with_pricing_bases() -> None:
+    manifest = RunManifest(
+        run_manifest_schema_version=2,
+        run_id="gson-2026-09-10",
+        created_at=datetime(2026, 9, 10, tzinfo=UTC),
+        command="uv run python -m reporationale.evaluation gson-2026-09-10",
+        repository=_IDENTITY,
+        resolved_commit_sha=_COMMIT_SHA,
+        source_schema_version=1,
+        chunk_schema_version=1,
+        chunker_algorithm_version=1,
+        max_chars=2000,
+        retrieval_result_limit=5,
+        question_set_version=1,
+        split="development",
+        answering_model="claude-opus-5",
+        agent_version="test-agent/1",
+        pricing_bases=(
+            PricingBasis(
+                provider="anthropic",
+                model="claude-opus-5",
+                input_price_per_million_usd=5.0,
+                output_price_per_million_usd=25.0,
+                verified_on=date(2026, 9, 7),
+            ),
+            PricingBasis(
+                provider="voyage",
+                model="voyage-4",
+                input_price_per_million_usd=0.06,
+                verified_on=date(2026, 9, 7),
+            ),
+        ),
+    )
+    reloaded = RunManifest.model_validate_json(manifest.model_dump_json())
+    assert reloaded == manifest
+    assert len(reloaded.pricing_bases) == 2
+    assert reloaded.pricing_bases[1].output_price_per_million_usd is None
+
+
+def test_run_manifest_rejects_duplicate_pricing_basis_provider_model_pair() -> None:
+    duplicate_bases = (
+        PricingBasis(
+            provider="anthropic",
+            model="claude-opus-5",
+            input_price_per_million_usd=5.0,
+            output_price_per_million_usd=25.0,
+            verified_on=date(2026, 9, 7),
+        ),
+        PricingBasis(
+            provider="anthropic",
+            model="claude-opus-5",
+            input_price_per_million_usd=6.0,
+            output_price_per_million_usd=30.0,
+            verified_on=date(2026, 9, 8),
+        ),
+    )
+    with pytest.raises(ValidationError, match="repeats provider/model pair"):
+        RunManifest(
+            run_manifest_schema_version=2,
+            run_id="run-1",
+            created_at=datetime(2026, 9, 10, tzinfo=UTC),
+            command="uv run ...",
+            repository=_IDENTITY,
+            resolved_commit_sha=_COMMIT_SHA,
+            source_schema_version=1,
+            chunk_schema_version=1,
+            chunker_algorithm_version=1,
+            max_chars=2000,
+            retrieval_result_limit=5,
+            question_set_version=1,
+            split="development",
+            pricing_bases=duplicate_bases,
+        )
+
+
+def test_pricing_basis_round_trips_with_output_price() -> None:
+    basis = PricingBasis(
+        provider="anthropic",
+        model="claude-opus-5",
+        input_price_per_million_usd=5.0,
+        output_price_per_million_usd=25.0,
+        verified_on=date(2026, 9, 7),
+    )
+    reloaded = PricingBasis.model_validate_json(basis.model_dump_json())
+    assert reloaded == basis
+
+
+def test_pricing_basis_round_trips_without_output_price() -> None:
+    """Voyage-style embedding pricing has no billable output rate at all;
+    `None` must round-trip distinctly from `0.0`."""
+    basis = PricingBasis(
+        provider="voyage",
+        model="voyage-4",
+        input_price_per_million_usd=0.06,
+        verified_on=date(2026, 9, 7),
+    )
+    reloaded = PricingBasis.model_validate_json(basis.model_dump_json())
+    assert reloaded == basis
+    assert reloaded.output_price_per_million_usd is None
+
+
+@pytest.mark.parametrize("field", ["provider", "model"])
+def test_pricing_basis_rejects_blank_fields(field: str) -> None:
+    fields: dict[str, object] = {
+        "provider": "anthropic",
+        "model": "claude-opus-5",
+        "input_price_per_million_usd": 5.0,
+        "output_price_per_million_usd": 25.0,
+        "verified_on": date(2026, 9, 7),
+    }
+    fields[field] = "   "
+    with pytest.raises(ValidationError):
+        PricingBasis(**fields)
+
+
+def test_pricing_basis_rejects_negative_input_price() -> None:
+    with pytest.raises(ValidationError):
+        PricingBasis(
+            provider="anthropic",
+            model="claude-opus-5",
+            input_price_per_million_usd=-1.0,
+            output_price_per_million_usd=25.0,
+            verified_on=date(2026, 9, 7),
+        )
+
+
+def test_pricing_basis_rejects_negative_output_price() -> None:
+    with pytest.raises(ValidationError):
+        PricingBasis(
+            provider="anthropic",
+            model="claude-opus-5",
+            input_price_per_million_usd=5.0,
+            output_price_per_million_usd=-1.0,
+            verified_on=date(2026, 9, 7),
+        )
+
+
+def test_pricing_basis_rejects_non_date_verified_on() -> None:
+    with pytest.raises(ValidationError):
+        PricingBasis(
+            provider="anthropic",
+            model="claude-opus-5",
+            input_price_per_million_usd=5.0,
+            verified_on="not-a-date",
+        )
+
+
+def test_pricing_basis_is_frozen() -> None:
+    basis = PricingBasis(
+        provider="anthropic",
+        model="claude-opus-5",
+        input_price_per_million_usd=5.0,
+        output_price_per_million_usd=25.0,
+        verified_on=date(2026, 9, 7),
+    )
+    with pytest.raises(ValidationError):
+        basis.provider = "other"  # type: ignore[misc]
 
 
 def test_run_manifest_rejects_blank_command() -> None:

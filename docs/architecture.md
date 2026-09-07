@@ -283,7 +283,10 @@ A completed local run contains a manifest, indexing measurements, separate
 raw query-embedding usage, retrieval and answer JSON Lines records, a computed
 summary, and a computed Markdown report. Known measurement gaps that cannot be
 attached to an identifiable skipped item are recorded separately from skipped
-items. Staged publication and reload validation prevent a partial write from
+items. The manifest may also record the provider, model, verification date,
+and per-million-token input/output rates used for cost estimates; providers
+without a separately billable output unit leave that rate absent. Staged
+publication and reload validation prevent a partial write from
 appearing complete. Semantic loading requires the corresponding reviewed
 question set so split leakage, understated applicable query-request counts,
 and tampered or mismatched summaries and reports are rejected.

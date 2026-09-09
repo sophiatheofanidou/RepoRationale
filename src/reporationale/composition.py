@@ -14,6 +14,7 @@ are fixed the same way.
 """
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from reporationale.adapters.anthropic_answering import (
@@ -59,11 +60,15 @@ def resolve_snapshot_root() -> Path:
     return Path(override) if override else DEFAULT_SNAPSHOT_ROOT
 
 
-def build_github_client(settings: Settings) -> GitHubClient:
+def build_github_client(
+    settings: Settings, *, before_request: Callable[[], None] | None = None
+) -> GitHubClient:
     """Construct the one `GitHubClient` used for a single preflight or
     indexing action. Callers are responsible for closing it (or using it as
     a context manager) once that action completes."""
-    return GitHubClient(token=settings.github_token.get_secret_value())
+    return GitHubClient(
+        token=settings.github_token.get_secret_value(), before_request=before_request
+    )
 
 
 def build_embedding_provider(settings: Settings) -> VoyageEmbeddingAdapter:

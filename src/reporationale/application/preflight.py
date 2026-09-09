@@ -231,7 +231,8 @@ def inspect_repository_reference(
     except GitHubRepositoryPrivate:
         unsupported_reason = (
             "private_repository",
-            "The repository is private; the MVP supports public repositories only.",
+            "This repository is private. RepoRationale currently supports public "
+            "repositories only.",
         )
     except GitHubAdapterError as error:
         unavailable = _map_adapter_error_to_unavailable(error)

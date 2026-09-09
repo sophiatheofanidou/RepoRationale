@@ -32,7 +32,7 @@ Security notes:
 """
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Lock
@@ -232,6 +232,7 @@ class GitHubClient:
         base_url: str = _DEFAULT_BASE_URL,
         timeout: float = _DEFAULT_TIMEOUT_SECONDS,
         transport: httpx.BaseTransport | None = None,
+        before_request: Callable[[], None] | None = None,
     ) -> None:
         self._token = SecretStr(token) if token else None
         self._base_url = _validate_base_url(base_url)
@@ -240,6 +241,7 @@ class GitHubClient:
         self._request_budget_limit: int | None = None
         self._request_budget_remaining: int | None = None
         self._request_state_lock = Lock()
+        self._before_request = before_request
         self._client = httpx.Client(
             base_url=self._base_url,
             timeout=timeout,
@@ -1039,6 +1041,14 @@ class GitHubClient:
         is checked here, before this request is counted or sent — the
         request that would exceed it is never dispatched.
         """
+        # Optional cooperative interruption hook used by the interactive
+        # indexing UI. It runs immediately before every network request,
+        # including pagination and redirect hops, and may raise to stop the
+        # operation without sending another request. Ordinary callers omit it
+        # and preserve the exact previous behaviour.
+        if self._before_request is not None:
+            self._before_request()
+
         with self._request_state_lock:
             if self._request_budget_remaining is not None:
                 if self._request_budget_remaining <= 0:

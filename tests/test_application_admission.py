@@ -261,6 +261,10 @@ def test_evaluate_admission_rejects_threshold_exceeded_inexact_issue_count() -> 
     assert decision.admitted is False
     assert decision.reason_code == "exceeds_all_issues_and_pull_requests_limit"
     assert decision.estimate.all_issues_and_pull_requests_count_is_exact is False
+    assert decision.message == (
+        "Combined issues and pull requests — estimated: at least 5,238. "
+        "Current limit: 5."
+    )
 
 
 @pytest.mark.parametrize(

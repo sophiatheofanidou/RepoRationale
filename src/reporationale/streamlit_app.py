@@ -30,7 +30,10 @@ import html
 import logging
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from importlib.resources import files
+from threading import Event, Lock, Thread
 from typing import Any
 
 import streamlit as st
@@ -101,6 +104,7 @@ _STATE_DOT_CLASSES = {
     "unsupported": "rr-dot-unsupported",
     "operational_failure": "rr-dot-operational_failure",
     "needs_indexing": "rr-dot-needs_indexing",
+    "indexing": "rr-dot-indexing",
     "ready": "rr-dot-ready",
 }
 
@@ -134,10 +138,14 @@ def _init_state() -> None:
         "search_service": None,
         "chat_turns": [],
         "banner_message": None,
+        "unsupported_reason_code": None,
         "confirm_rebuild": False,
         "ask_error": None,
         "question_input_revision": 0,
         "question_input_value": "",
+        "indexing_job": None,
+        "indexing_cancelled": False,
+        "indexing_force_rebuild": False,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -165,6 +173,9 @@ def _replace_question_input(value: str) -> None:
 
 
 def _reset_investigation() -> None:
+    job = st.session_state.get("indexing_job")
+    if job is not None:
+        job.cancel()
     _close_search_service()
     st.session_state.stage = "idle"
     st.session_state.identity = None
@@ -173,8 +184,12 @@ def _reset_investigation() -> None:
     st.session_state.readiness = None
     st.session_state.chat_turns = []
     st.session_state.banner_message = None
+    st.session_state.unsupported_reason_code = None
     st.session_state.confirm_rebuild = False
     st.session_state.ask_error = None
+    st.session_state.indexing_job = None
+    st.session_state.indexing_cancelled = False
+    st.session_state.indexing_force_rebuild = False
     st.session_state.repo_input = ""
     _replace_question_input("")
 
@@ -218,6 +233,7 @@ def _handle_check(raw: str, settings: Settings) -> None:
     _close_search_service()
     st.session_state.chat_turns = []
     st.session_state.banner_message = None
+    st.session_state.unsupported_reason_code = None
     st.session_state.confirm_rebuild = False
 
     with composition.build_github_client(settings) as client:
@@ -234,6 +250,7 @@ def _handle_check(raw: str, settings: Settings) -> None:
         if preflight.status == "unsupported":
             st.session_state.stage = "unsupported"
             st.session_state.banner_message = preflight.message
+            st.session_state.unsupported_reason_code = preflight.reason_code
             return
 
         identity = preflight.repository
@@ -409,67 +426,125 @@ def _progress_view_html(
     )
 
 
-def _run_indexing_pipeline(
+class _IndexingCancelled(Exception):
+    """Internal cooperative-stop signal; never shown as an application error."""
+
+
+@dataclass(frozen=True)
+class _IndexingRunResult:
+    stage: str
+    message: str | None = None
+    resolved_commit_sha: str | None = None
+
+
+@dataclass(frozen=True)
+class _IndexingJobSnapshot:
+    events: tuple[ProgressEvent, ...]
+    elapsed_seconds: float
+    cancellation_requested: bool
+    result: _IndexingRunResult | None
+
+
+class _IndexingJob:
+    """One background indexing run with thread-safe progress and cancellation.
+
+    The worker never reads or writes Streamlit session state. The foreground
+    fragment polls this small object once per second, which keeps the elapsed
+    timer and Cancel button responsive while provider calls are in flight.
+    """
+
+    def __init__(
+        self,
+        *,
+        action: Callable[[_IndexingJob], _IndexingRunResult],
+        monotonic_clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._action = action
+        self._clock = monotonic_clock
+        self._started_at = monotonic_clock()
+        self._cancel_event = Event()
+        self._lock = Lock()
+        self._events: list[ProgressEvent] = []
+        self._result: _IndexingRunResult | None = None
+        self._thread = Thread(target=self._run, daemon=True, name="indexing-job")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+
+    def raise_if_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise _IndexingCancelled
+
+    def report_progress(self, event: ProgressEvent) -> None:
+        self.raise_if_cancelled()
+        with self._lock:
+            self._events.append(event)
+        self.raise_if_cancelled()
+
+    def snapshot(self) -> _IndexingJobSnapshot:
+        with self._lock:
+            events = tuple(self._events)
+            result = self._result
+        return _IndexingJobSnapshot(
+            events=events,
+            elapsed_seconds=self._clock() - self._started_at,
+            cancellation_requested=self._cancel_event.is_set(),
+            result=result,
+        )
+
+    def _run(self) -> None:
+        try:
+            result = self._action(self)
+        except Exception:
+            _logger.exception("Unexpected indexing worker failure.")
+            result = _IndexingRunResult(
+                stage="operational_failure",
+                message=(
+                    "Indexing stopped because of an unexpected local problem. "
+                    "Full details were written to the local logs."
+                ),
+            )
+        with self._lock:
+            self._result = result
+
+
+def _perform_indexing_pipeline(
     settings: Settings,
     metadata: GitHubRepositoryMetadata,
     *,
     force_rebuild: bool,
-    status_placeholder: Any,
-) -> bool:
-    """Run (or reuse) normalized-source, chunk, and vector-index building,
-    painting a live six-phase progress view (matching the mock's pulsing
-    active-phase indicator and percentage bar) into a dedicated placeholder
-    as the application workflows report real `ProgressEvent`s. Returns
-    `True` on success; on a handled failure it records a banner message,
-    sets the matching stage, and returns `False` without raising.
+    job: _IndexingJob,
+) -> _IndexingRunResult:
+    """Run the complete pipeline off the Streamlit script thread.
+
+    Cancellation is checked before every GitHub request and at every workflow
+    progress boundary. In-flight network calls are allowed to return, while
+    staged/atomic publication guarantees ensure no partial index becomes ready.
     """
-    st.session_state.banner_message = None
-    repo = metadata.identity.repository
-    action = "Rebuilding" if force_rebuild else "Indexing"
-    heading = f"{action} {repo}"
-    painter = _IndexingProgressPainter()
-    progress_placeholder = st.empty()
-    started_at = time.monotonic()
-
-    def repaint() -> None:
-        percent = painter.percent()
-        status_placeholder.markdown(
-            f'<div class="rr-status-line-text"><span class="rr-dot rr-dot-indexing">'
-            f'</span><span class="rr-status-copy">{html.escape(repo)} · '
-            f"{action.lower()} {percent}%{_dots_html()}</span>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        progress_placeholder.markdown(
-            _progress_view_html(
-                heading, painter, elapsed_seconds=time.monotonic() - started_at
-            ),
-            unsafe_allow_html=True,
-        )
-
-    def on_progress(event: ProgressEvent) -> None:
-        painter.apply(event)
-        repaint()
-
-    repaint()
-
     try:
-        with composition.build_github_client(settings) as client:
+        job.raise_if_cancelled()
+        with composition.build_github_client(
+            settings, before_request=job.raise_if_cancelled
+        ) as client:
             if force_rebuild:
                 build_result = rebuild_normalized_source_snapshot(
                     metadata,
                     github_client=client,
                     snapshot_root=_SNAPSHOT_ROOT,
-                    on_progress=on_progress,
+                    on_progress=job.report_progress,
                 )
             else:
                 build_result = build_normalized_source_snapshot(
                     metadata,
                     github_client=client,
                     snapshot_root=_SNAPSHOT_ROOT,
-                    on_progress=on_progress,
+                    on_progress=job.report_progress,
                 )
 
+        job.raise_if_cancelled()
         snapshot_dir = snapshot_directory(
             root=_SNAPSHOT_ROOT,
             identity=metadata.identity,
@@ -479,30 +554,32 @@ def _run_indexing_pipeline(
             snapshot_dir=snapshot_dir,
             max_chars=composition.CHUNK_MAX_CHARS,
             force_rebuild=force_rebuild,
-            on_progress=on_progress,
+            on_progress=job.report_progress,
         )
 
+        job.raise_if_cancelled()
         embedding_provider = composition.build_embedding_provider(settings)
         search_service = load_search_history_service(
             snapshot_dir=snapshot_dir,
             max_chars=composition.CHUNK_MAX_CHARS,
             embedding_provider=embedding_provider,
             force_rebuild=force_rebuild,
-            on_progress=on_progress,
+            on_progress=job.report_progress,
+        )
+        search_service.close()
+        job.raise_if_cancelled()
+    except _IndexingCancelled:
+        return _IndexingRunResult(
+            stage="cancelled",
+            message="Indexing was cancelled. You can start it again when you're ready.",
         )
     except NormalizedSourceBuildRejected as error:
-        st.session_state.stage = "unsupported"
-        st.session_state.banner_message = error.decision.message
-        return False
+        return _IndexingRunResult(stage="unsupported", message=error.decision.message)
     except RuntimeIngestionLimitExceeded as error:
-        st.session_state.stage = "unsupported"
-        st.session_state.banner_message = error.message
-        return False
+        return _IndexingRunResult(stage="unsupported", message=error.message)
     except GitHubAdapterError as error:
         _logger.exception("Indexing failed due to a GitHub adapter error.")
-        st.session_state.stage = "operational_failure"
-        st.session_state.banner_message = str(error)
-        return False
+        return _IndexingRunResult(stage="operational_failure", message=str(error))
     except OSError as error:
         # Covers a transient local filesystem/permission failure while
         # publishing a snapshot artifact -- observed in practice as a
@@ -514,69 +591,131 @@ def _run_indexing_pipeline(
         _logger.exception(
             "Indexing failed while publishing local snapshot artifacts: %s", error
         )
-        st.session_state.stage = "needs_indexing"
-        st.session_state.banner_message = (
-            "Indexing failed while saving the local index (a filesystem "
-            "or permission problem, often transient on Windows). Sources "
-            "and chunks already collected were kept; you can retry "
-            "indexing. Full details were written to the local logs."
+        return _IndexingRunResult(
+            stage="needs_indexing",
+            message=(
+                "Indexing failed while saving the local index (a filesystem "
+                "or permission problem, often transient on Windows). Sources "
+                "and chunks already collected were kept; you can retry "
+                "indexing. Full details were written to the local logs."
+            ),
         )
-        return False
     except SnapshotStoreError as error:
         _logger.exception("Indexing failed due to a local snapshot-store problem.")
-        st.session_state.stage = "needs_indexing"
-        st.session_state.banner_message = (
-            "Indexing failed while reading or writing a local artifact "
-            f"(a data-integrity problem: {error}). You can retry "
-            "indexing. Full details were written to the local logs."
+        return _IndexingRunResult(
+            stage="needs_indexing",
+            message=(
+                "Indexing failed while reading or writing a local artifact "
+                f"(a data-integrity problem: {error}). You can retry "
+                "indexing. Full details were written to the local logs."
+            ),
         )
-        return False
     except VoyageEmbeddingError as error:
         _logger.exception("Indexing failed due to a Voyage embedding problem.")
-        st.session_state.stage = "needs_indexing"
-        st.session_state.banner_message = (
-            f"Indexing failed while creating embeddings ({error}). Sources "
-            "and chunks already collected were kept; you can retry "
-            "indexing. Full details were written to the local logs."
+        return _IndexingRunResult(
+            stage="needs_indexing",
+            message=(
+                f"Indexing failed while creating embeddings ({error}). Sources "
+                "and chunks already collected were kept; you can retry "
+                "indexing. Full details were written to the local logs."
+            ),
         )
-        return False
+    return _IndexingRunResult(
+        stage="ready", resolved_commit_sha=build_result.manifest.resolved_commit_sha
+    )
 
-    st.session_state.resolved_commit_sha = build_result.manifest.resolved_commit_sha
+
+def _start_indexing_job(settings: Settings, *, force_rebuild: bool) -> None:
+    metadata: GitHubRepositoryMetadata = st.session_state.metadata
+    if force_rebuild:
+        _close_search_service()
+    st.session_state.banner_message = None
+    st.session_state.indexing_cancelled = False
+    st.session_state.confirm_rebuild = False
+    job = _IndexingJob(
+        action=lambda running_job: _perform_indexing_pipeline(
+            settings,
+            metadata,
+            force_rebuild=force_rebuild,
+            job=running_job,
+        )
+    )
+    st.session_state.indexing_job = job
+    st.session_state.indexing_force_rebuild = force_rebuild
+    st.session_state.stage = "indexing"
+    job.start()
+
+
+def _finish_indexing_job(settings: Settings, result: _IndexingRunResult) -> None:
+    st.session_state.indexing_job = None
     st.session_state.chat_turns = []
+    if result.stage == "cancelled":
+        st.session_state.stage = "needs_indexing"
+        st.session_state.banner_message = result.message
+        st.session_state.indexing_cancelled = True
+        return
+    st.session_state.indexing_cancelled = False
+    if result.stage != "ready":
+        st.session_state.stage = result.stage
+        st.session_state.banner_message = result.message
+        return
+
+    assert result.resolved_commit_sha is not None
+    st.session_state.resolved_commit_sha = result.resolved_commit_sha
     try:
         readiness = check_repository_readiness(
-            identity=metadata.identity,
-            resolved_commit_sha=build_result.manifest.resolved_commit_sha,
+            identity=st.session_state.metadata.identity,
+            resolved_commit_sha=result.resolved_commit_sha,
             snapshot_root=_SNAPSHOT_ROOT,
             max_chars=composition.CHUNK_MAX_CHARS,
         )
+        _open_search_service(settings, readiness)
     except SnapshotStoreError:
-        _logger.exception("Re-checking readiness after a completed build failed.")
-        search_service.close()
+        _logger.exception("Opening the completed index failed.")
         st.session_state.stage = "needs_indexing"
         st.session_state.banner_message = _LOCAL_SNAPSHOT_PROBLEM_MESSAGE
-        return False
-
-    st.session_state.search_service = search_service
+        return
     st.session_state.readiness = readiness
+    st.session_state.banner_message = None
     st.session_state.stage = "ready"
-    return True
 
 
-def _handle_start_indexing(settings: Settings, status_placeholder: Any) -> None:
-    metadata = st.session_state.metadata
-    _run_indexing_pipeline(
-        settings, metadata, force_rebuild=False, status_placeholder=status_placeholder
+@st.fragment(run_every=1.0)
+def _render_indexing_job(settings: Settings) -> None:
+    job: _IndexingJob | None = st.session_state.get("indexing_job")
+    if job is None:
+        return
+    snapshot = job.snapshot()
+    painter = _IndexingProgressPainter()
+    for event in snapshot.events:
+        painter.apply(event)
+    action = (
+        "Rebuilding" if st.session_state.get("indexing_force_rebuild") else "Indexing"
     )
-
-
-def _handle_rebuild(settings: Settings, status_placeholder: Any) -> None:
-    metadata = st.session_state.metadata
-    _close_search_service()
-    st.session_state.confirm_rebuild = False
-    _run_indexing_pipeline(
-        settings, metadata, force_rebuild=True, status_placeholder=status_placeholder
-    )
+    heading_col, cancel_col = st.columns([5, 1], vertical_alignment="top")
+    with heading_col:
+        st.markdown(
+            _progress_view_html(
+                f"{action} {st.session_state.metadata.identity.repository}",
+                painter,
+                elapsed_seconds=snapshot.elapsed_seconds,
+            ),
+            unsafe_allow_html=True,
+        )
+    with cancel_col:
+        if st.button(
+            "Cancel",
+            key="cancel_indexing_button",
+            disabled=snapshot.cancellation_requested,
+            width="stretch",
+        ):
+            job.cancel()
+            st.rerun(scope="fragment")
+        if snapshot.cancellation_requested:
+            st.caption("Stopping safely…")
+    if snapshot.result is not None:
+        _finish_indexing_job(settings, snapshot.result)
+        st.rerun()
 
 
 class _EvidenceRecordingSearchHistory:
@@ -697,6 +836,7 @@ def _render_sidebar() -> None:
                     "unsupported": "unsupported",
                     "operational_failure": "temporarily unavailable",
                     "needs_indexing": "indexing required",
+                    "indexing": "indexing",
                     "ready": "ready",
                 }.get(stage, stage),
                 dot_class,
@@ -820,6 +960,8 @@ def _status_dot_and_text_html(stage: str) -> str:
         )
     elif stage == "needs_indexing" and identity is not None:
         text = f"{identity.repository} · indexing required"
+    elif stage == "indexing" and identity is not None:
+        text = f"{identity.repository} · indexing"
     elif stage == "unsupported":
         text = "Unsupported repository"
     elif stage == "operational_failure":
@@ -956,13 +1098,27 @@ def _render_setup_section(settings: Settings, status_placeholder: Any) -> None:
 
     stage = st.session_state.stage
     if stage == "unsupported" and st.session_state.banner_message:
-        st.markdown(
-            '<div class="rr-info-card rr-variant-danger">'
-            '<div class="rr-info-card-title">Unsupported repository</div>'
-            f'<div class="rr-info-card-body">'
-            f"{html.escape(st.session_state.banner_message)}</div></div>",
-            unsafe_allow_html=True,
-        )
+        reason_code = st.session_state.unsupported_reason_code or ""
+        if reason_code.startswith("exceeds_"):
+            repository = st.session_state.repo_input.strip()
+            st.markdown(
+                '<div class="rr-info-card rr-variant-danger">'
+                '<div class="rr-info-card-title">Unsupported repository</div>'
+                '<div class="rr-info-card-body">'
+                f"<code>{html.escape(repository)}</code> is larger than "
+                "RepoRationale currently supports. Try a smaller repository."
+                '<div class="rr-limit-detail"><strong>Limit exceeded</strong><br>'
+                f"{html.escape(st.session_state.banner_message)}</div></div></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div class="rr-info-card rr-variant-danger">'
+                '<div class="rr-info-card-title">Unsupported repository</div>'
+                f'<div class="rr-info-card-body">'
+                f"{html.escape(st.session_state.banner_message)}</div></div>",
+                unsafe_allow_html=True,
+            )
     elif stage == "operational_failure" and st.session_state.banner_message:
         st.markdown(
             '<div class="rr-info-card rr-variant-danger">'
@@ -980,9 +1136,12 @@ def _render_setup_section(settings: Settings, status_placeholder: Any) -> None:
             # its already-resolved metadata are still valid, so a real
             # retry is offered here rather than the plain "not indexed
             # yet" card below.
+            cancelled = st.session_state.indexing_cancelled
+            variant = "warn" if cancelled else "danger"
+            title = "Indexing stopped" if cancelled else "Indexing problem"
             st.markdown(
-                '<div class="rr-info-card rr-variant-danger">'
-                '<div class="rr-info-card-title">Indexing problem</div>'
+                f'<div class="rr-info-card rr-variant-{variant}">'
+                f'<div class="rr-info-card-title">{title}</div>'
                 f'<div class="rr-info-card-body">{html.escape(problem_message)}'
                 "</div></div>",
                 unsafe_allow_html=True,
@@ -1001,7 +1160,7 @@ def _render_setup_section(settings: Settings, status_placeholder: Any) -> None:
             button_label = "Start indexing"
         start_indexing = st.button(button_label, type="primary")
         if start_indexing:
-            _handle_start_indexing(settings, status_placeholder)
+            _start_indexing_job(settings, force_rebuild=False)
             st.rerun()
 
     if submitted and raw.strip():
@@ -1349,12 +1508,14 @@ def render() -> None:
 
     status_placeholder, rebuild_confirmed = _render_status_row()
     if rebuild_confirmed:
-        _handle_rebuild(settings, status_placeholder)
+        _start_indexing_job(settings, force_rebuild=True)
         st.rerun()
 
     stage = st.session_state.stage
     if stage in ("idle", "unsupported", "operational_failure", "needs_indexing"):
         _render_setup_section(settings, status_placeholder)
+    elif stage == "indexing":
+        _render_indexing_job(settings)
     elif stage == "ready":
         _render_ready_content()
 

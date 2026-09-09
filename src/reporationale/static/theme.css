@@ -686,6 +686,22 @@ p.rr-setup-sub,
   border-radius: 4px;
 }
 
+.rr-limit-detail {
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rr-border-soft);
+  color: var(--rr-text-faint);
+  font-family: var(--rr-mono);
+  font-size: 11.2px;
+  line-height: 1.55;
+}
+
+.rr-limit-detail strong {
+  color: var(--rr-text-dim);
+  font-family: var(--rr-sans);
+  font-weight: 620;
+}
+
 /* Rebuild confirmation */
 .rr-confirm-panel {
   border: 1px dashed var(--rr-amber-border);

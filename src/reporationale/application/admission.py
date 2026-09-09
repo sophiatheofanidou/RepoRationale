@@ -242,35 +242,43 @@ def evaluate_admission(
             estimate.all_issues_and_pull_requests_count,
             limits.max_all_issues_and_pull_requests,
             "exceeds_all_issues_and_pull_requests_limit",
-            "The repository's combined issue and pull-request count exceeds "
-            "the tested MVP limit.",
+            "Combined issues and pull requests",
         ),
         (
             estimate.closed_pull_request_count,
             limits.max_closed_pull_requests,
             "exceeds_closed_pull_request_limit",
-            "The repository's closed pull-request count exceeds the tested MVP limit.",
+            "Closed pull requests",
         ),
         (
             estimate.commit_count,
             limits.max_commits,
             "exceeds_commit_limit",
-            "The repository's commit history exceeds the tested MVP limit.",
+            "Commits",
         ),
         (
             estimate.tree_entry_count,
             limits.max_tree_entries,
             "exceeds_tree_entry_limit",
-            "The repository's Git tree exceeds the tested MVP limit.",
+            "Git tree entries",
         ),
     )
 
-    for measured, limit, reason_code, message in checks:
+    for measured, limit, reason_code, label in checks:
         if measured > limit:
+            qualifier = (
+                "at least "
+                if reason_code == "exceeds_all_issues_and_pull_requests_limit"
+                and not estimate.all_issues_and_pull_requests_count_is_exact
+                else ""
+            )
             return AdmissionDecision(
                 admitted=False,
                 reason_code=reason_code,
-                message=message,
+                message=(
+                    f"{label} — estimated: {qualifier}{measured:,}. "
+                    f"Current limit: {limit:,}."
+                ),
                 estimate=estimate,
                 limits=limits,
             )

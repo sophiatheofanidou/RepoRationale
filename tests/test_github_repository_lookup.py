@@ -89,6 +89,61 @@ def test_get_repository_follows_redirect_for_renamed_repository() -> None:
     assert metadata.identity.name == "new-repo-name"
 
 
+def test_before_request_hook_can_stop_before_sending_any_request() -> None:
+    calls: list[str] = []
+
+    class StopRequested(Exception):
+        pass
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return json_response(200, load_fixture("repository_public.json"))
+
+    def stop_before_request() -> None:
+        raise StopRequested
+
+    client = GitHubClient(
+        token=_SECRET_TOKEN,
+        transport=mock_transport(handler),
+        before_request=stop_before_request,
+    )
+
+    with pytest.raises(StopRequested):
+        client.get_repository(_IDENTITY)
+
+    assert calls == []
+    assert client.request_count == 0
+
+
+def test_before_request_hook_runs_for_every_redirect_hop() -> None:
+    checks = 0
+    calls: list[str] = []
+
+    def before_request() -> None:
+        nonlocal checks
+        checks += 1
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if len(calls) == 1:
+            return raw_response(
+                301,
+                b"",
+                headers={"Location": "/repos/new-owner-name/new-repo-name"},
+            )
+        return json_response(200, load_fixture("repository_renamed.json"))
+
+    client = GitHubClient(
+        token=_SECRET_TOKEN,
+        transport=mock_transport(handler),
+        before_request=before_request,
+    )
+    client.get_repository(_IDENTITY)
+
+    assert checks == 2
+    assert len(calls) == 2
+
+
 def test_get_repository_rejects_non_github_identity_before_any_request() -> None:
     """An identity for a platform other than GitHub is rejected without a call."""
     calls: list[str] = []

@@ -10,12 +10,14 @@ reached through `preflight_repository_reference`), so it can exercise the
 "unsupported" stage without a fake or real GitHub client.
 """
 
+import time
 from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from reporationale.adapters.github import GitHubRepositoryMetadata
+from reporationale.application.progress import ProgressEvent
 from reporationale.domain.answering import (
     AnsweredOutcome,
     Citation,
@@ -37,6 +39,18 @@ _CREDENTIAL_VARIABLES = ("GITHUB_TOKEN", "VOYAGE_API_KEY", "ANTHROPIC_API_KEY")
 # voyageai, pydantic) can comfortably exceed AppTest's 3-second default on
 # the first run in a process; a warm second run is fast regardless.
 _RUN_TIMEOUT_SECONDS = 60
+
+
+def _run_until_stage(at: AppTest, expected: str, *, attempts: int = 50) -> None:
+    """Drive AppTest reruns while a fast background indexing stub finishes."""
+    for _ in range(attempts):
+        at.run(timeout=_RUN_TIMEOUT_SECONDS)
+        if at.session_state["stage"] == expected:
+            return
+        time.sleep(0.01)
+    raise AssertionError(
+        f"stage did not become {expected!r}; got {at.session_state['stage']!r}"
+    )
 
 
 def test_missing_credentials_shows_setup_error(
@@ -76,6 +90,38 @@ def test_malformed_repository_reference_is_rejected_before_any_network_call(
 
     assert not at.exception
     assert any("owner/repository" in markdown.value.lower() for markdown in at.markdown)
+
+
+def test_size_rejection_uses_product_copy_and_only_the_exceeded_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for variable in _CREDENTIAL_VARIABLES:
+        monkeypatch.setenv(variable, f"{variable.lower()}-test-value")
+
+    at = AppTest.from_file(_APP_PATH)
+    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+    at.session_state["stage"] = "unsupported"
+    at.session_state["repo_input"] = "torvalds/linux"
+    at.session_state["unsupported_reason_code"] = (
+        "exceeds_all_issues_and_pull_requests_limit"
+    )
+    at.session_state["banner_message"] = (
+        "Combined issues and pull requests — estimated: at least 3,600. "
+        "Current limit: 3,500."
+    )
+    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+
+    rendered = next(
+        markdown.value
+        for markdown in at.markdown
+        if "rr-info-card-title\">Unsupported repository" in markdown.value
+    )
+    assert "torvalds/linux" in rendered
+    assert "larger than RepoRationale currently supports" in rendered
+    assert "Limit exceeded" in rendered
+    assert "at least 3,600" in rendered
+    assert "MVP" not in rendered
+    assert "embedding" not in rendered.lower()
 
 
 def test_recoverable_indexing_failure_offers_a_working_retry_indexing_action(
@@ -129,7 +175,7 @@ def test_recoverable_indexing_failure_offers_a_working_retry_indexing_action(
     at.run(timeout=_RUN_TIMEOUT_SECONDS)
     assert not at.exception
 
-    assert at.session_state["stage"] == "needs_indexing"
+    _run_until_stage(at, "needs_indexing")
     assert any("Indexing problem" in markdown.value for markdown in at.markdown)
     retry_buttons = [button for button in at.button if button.label == "Retry indexing"]
     assert len(retry_buttons) == 1
@@ -137,12 +183,66 @@ def test_recoverable_indexing_failure_offers_a_working_retry_indexing_action(
     # The retry action is real: clicking it drives the same handler again
     # (still failing here, deterministically, since the workflow is still
     # patched), proving this is a working button wired to
-    # `_handle_start_indexing`, not inert text.
+    # the background indexing action, not inert text.
     retry_buttons[0].click()
-    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+    _run_until_stage(at, "needs_indexing")
     assert not at.exception
     assert at.session_state["stage"] == "needs_indexing"
     assert any("Indexing problem" in markdown.value for markdown in at.markdown)
+
+
+def test_indexing_timer_refreshes_and_cancel_stops_the_background_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for variable in _CREDENTIAL_VARIABLES:
+        monkeypatch.setenv(variable, f"{variable.lower()}-test-value")
+
+    def _slow_until_cancelled(*args: object, **kwargs: object) -> object:
+        on_progress = kwargs["on_progress"]
+        assert callable(on_progress)
+        while True:
+            on_progress(ProgressEvent(phase="collecting_sources", status="started"))
+            time.sleep(0.02)
+
+    monkeypatch.setattr(
+        "reporationale.application.snapshot_workflow.build_normalized_source_snapshot",
+        _slow_until_cancelled,
+    )
+
+    at = AppTest.from_file(_APP_PATH)
+    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+    identity = RepositoryIdentity(platform="github", owner="octo-org", name="demo-repo")
+    at.session_state["stage"] = "needs_indexing"
+    at.session_state["identity"] = identity
+    at.session_state["metadata"] = GitHubRepositoryMetadata(
+        identity=identity,
+        github_id=1,
+        html_url="https://github.com/octo-org/demo-repo",  # type: ignore[arg-type]
+        private=False,
+        default_branch="main",
+    )
+    at.session_state["resolved_commit_sha"] = "c" * 40
+    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+
+    next(button for button in at.button if button.label == "Start indexing").click()
+    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+    assert at.session_state["stage"] == "indexing"
+    assert any("elapsed 0s" in markdown.value for markdown in at.markdown)
+
+    time.sleep(1.05)
+    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+    assert any(
+        "elapsed 1s" in markdown.value or "elapsed 2s" in markdown.value
+        for markdown in at.markdown
+    )
+
+    cancel = next(button for button in at.button if button.label == "Cancel")
+    cancel.click()
+    at.run(timeout=_RUN_TIMEOUT_SECONDS)
+    _run_until_stage(at, "needs_indexing")
+
+    assert at.session_state["indexing_job"] is None
+    assert any("Indexing stopped" in markdown.value for markdown in at.markdown)
 
 
 def test_suggested_question_can_be_reselected_after_chat_and_investigation_reset(

@@ -177,6 +177,83 @@ def test_pull_request_reviews_use_at_most_eight_concurrent_requests() -> None:
     assert corpus.counts_by_source_type == {"pull_request": 9}
 
 
+def test_pull_request_review_comments_run_concurrently_with_review_summaries() -> None:
+    """The scoped concurrency change: repository-wide PR review comments
+    must start before every per-PR review-summary call has finished,
+    proving the two run side by side rather than strictly one after the
+    other. Under the old sequential order, review comments were only
+    requested after all review summaries had already completed, so the
+    review-summary handler below (which waits for the review-comments
+    request to start) would hang until timeout instead of proceeding.
+    """
+    template = load_fixture("pull_request_merged.json")
+    pull_requests = [
+        {
+            **template,
+            "id": 9100 + number,
+            "number": number,
+            "html_url": f"https://github.com/octo-org/example-repo/pull/{number}",
+        }
+        for number in range(1, 4)
+    ]
+    review_comments_started = Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/repos/octo-org/example-repo/pulls":
+            return json_response(200, pull_requests)
+        if path.endswith("/reviews"):
+            assert review_comments_started.wait(timeout=2), (
+                "a review-summary call completed before repository-wide "
+                "review-comment collection started -- they are no longer "
+                "running concurrently"
+            )
+            return json_response(200, [])
+        if path == "/repos/octo-org/example-repo/pulls/comments":
+            review_comments_started.set()
+            return json_response(200, [])
+        if path in {
+            "/repos/octo-org/example-repo/issues",
+            "/repos/octo-org/example-repo/issues/comments",
+            "/repos/octo-org/example-repo/commits",
+        }:
+            return json_response(200, [])
+        if path == f"/repos/octo-org/example-repo/git/trees/{_TREE_SHA}":
+            return json_response(
+                200, {"sha": _TREE_SHA, "truncated": False, "tree": []}
+            )
+        raise AssertionError(f"unexpected request: {path}")
+
+    corpus = _assemble(
+        GitHubClient(token=_SECRET_TOKEN, transport=mock_transport(handler))
+    )
+
+    assert corpus.counts_by_source_type == {"pull_request": 3}
+
+
+def test_assemble_repository_corpus_aborts_when_review_comments_stage_fails() -> None:
+    """A failure in the concurrently-run repository-wide review-comments
+    collection must abort the whole assembly -- not be silently absorbed
+    while the review-summary fetch running alongside it succeeds."""
+    template = load_fixture("pull_request_merged.json")
+    pull_requests = [{**template, "id": 9200, "number": 1}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/repos/octo-org/example-repo/pulls":
+            return json_response(200, pull_requests)
+        if path.endswith("/reviews"):
+            return json_response(200, [])
+        if path == "/repos/octo-org/example-repo/pulls/comments":
+            return json_response(200, {"message": "not a list"})
+        raise AssertionError(f"unexpected request: {path}")
+
+    client = GitHubClient(token=_SECRET_TOKEN, transport=mock_transport(handler))
+
+    with pytest.raises(GitHubMalformedResponse):
+        _assemble(client)
+
+
 def test_assemble_repository_corpus_aborts_on_a_duplicate_within_one_source_type() -> (
     None
 ):

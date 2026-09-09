@@ -7,6 +7,14 @@ inline-review-comments, standalone issues/comments, commit messages, and
 Markdown files into one deterministically ordered, duplicate-free list of
 `SourceDocument`s, plus a small summary of counts.
 
+Collection is mostly sequential, one source type at a time, except for two
+bounded points where measurement justified concurrency: per-PR review
+summaries (no repository-wide REST equivalent exists, so eight workers
+fetch them independently) and, since both depend only on the pull-request
+numbers already known by that point, repository-wide PR review comments run
+alongside that same review-summary fetch rather than after it (see
+`_collect_pull_request_review_data`).
+
 Does not persist anything (no snapshot/`sources.jsonl` in this batch). Any
 request, pagination, validation, duplicate, decoding, or completeness
 failure aborts the entire operation; nothing partial is ever returned.
@@ -192,6 +200,42 @@ def _collect_pull_request_reviews(
     ]
 
 
+def _collect_pull_request_review_data(
+    identity: RepositoryIdentity,
+    *,
+    pull_request_numbers: set[int],
+    github_client: GitHubClient,
+) -> tuple[list[SourceDocument], list[SourceDocument]]:
+    """Collect per-PR review summaries and repository-wide PR review
+    comments side by side, since both depend only on `pull_request_numbers`
+    (already known at this point) and neither depends on the other or on
+    any issue data collected later. Measurement showed the repository-wide
+    review-comments call is by a wide margin the single largest contributor
+    to total collection time, while the per-PR review-summary fetch above
+    is smaller; running them concurrently hides the smaller call behind the
+    larger one instead of paying for both back to back. A failure in either
+    aborts the whole assembly, exactly like every other collection call in
+    this module -- `ThreadPoolExecutor.__exit__` still waits for whichever
+    call is still running before the failure propagates, so no corpus is
+    ever built from only one of the two.
+    """
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        review_summaries_future = executor.submit(
+            _collect_pull_request_reviews,
+            identity,
+            pull_request_numbers=pull_request_numbers,
+            github_client=github_client,
+        )
+        review_comments_future = executor.submit(
+            github_client.list_repository_pull_request_review_comments,
+            identity,
+            closed_pull_request_numbers=pull_request_numbers,
+        )
+        review_summaries = review_summaries_future.result()
+        review_comments = review_comments_future.result()
+    return review_summaries, review_comments
+
+
 def assemble_repository_corpus(
     identity: RepositoryIdentity,
     *,
@@ -224,13 +268,12 @@ def assemble_repository_corpus(
         _require_item_number(pull_request, context="pull-request")
         for pull_request in pull_requests
     }
-    documents.extend(
-        _collect_pull_request_reviews(
-            identity,
-            pull_request_numbers=pull_request_numbers,
-            github_client=github_client,
-        )
+    review_summaries, pull_request_review_comments = _collect_pull_request_review_data(
+        identity,
+        pull_request_numbers=pull_request_numbers,
+        github_client=github_client,
     )
+    documents.extend(review_summaries)
 
     issues = github_client.list_standalone_issues(identity)
     documents.extend(issues)
@@ -243,12 +286,7 @@ def assemble_repository_corpus(
             closed_pull_request_numbers=pull_request_numbers,
         )
     )
-    documents.extend(
-        github_client.list_repository_pull_request_review_comments(
-            identity,
-            closed_pull_request_numbers=pull_request_numbers,
-        )
-    )
+    documents.extend(pull_request_review_comments)
 
     documents.extend(github_client.list_commits(identity, resolved_commit_sha))
 

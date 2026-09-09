@@ -9,6 +9,7 @@ and `VoyageEmbeddingError`.
 """
 
 from collections.abc import Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Literal, Protocol
 
 from voyageai.client import Client as _VoyageClient
@@ -22,6 +23,12 @@ VOYAGE_EMBEDDING_MODEL = "voyage-4"
 # One conservative internal batch size for document-embedding requests.
 # Preserves input order across batches; not a tuning knob exposed to callers.
 _DOCUMENT_BATCH_SIZE = 128
+
+# A small fixed document-only concurrency bound. The measured Gson run used
+# roughly 0.85M tokens/minute sequentially, while Voyage documents an 8M TPM
+# Basic limit for voyage-4. Four concurrent requests therefore leave ample
+# headroom without exposing account-specific rate-limit tuning to callers.
+_DOCUMENT_CONCURRENCY = 4
 
 _InputType = Literal["document", "query"]
 
@@ -105,17 +112,55 @@ class VoyageEmbeddingAdapter:
     (content is never silently truncated), and uses `input_type="document"`
     for `embed_documents` and `input_type="query"` for `embed_query`.
     Document requests are split into batches of at most
-    `_DOCUMENT_BATCH_SIZE` texts, preserving input order across batches, and
-    the returned `total_tokens` accumulates across every batch actually
-    sent. No network call is made unless `embed_documents`/`embed_query` is
-    actually invoked.
+    `_DOCUMENT_BATCH_SIZE` texts and up to `_DOCUMENT_CONCURRENCY` batches
+    are in flight at once. Submission stays bounded to that window, results
+    are consumed in input-batch order, and the returned `total_tokens`
+    accumulates across every successful response consumed. Query embedding
+    remains one synchronous request. No network call is made unless
+    `embed_documents`/`embed_query` is actually invoked.
     """
 
     def __init__(self, client: VoyageEmbeddingClient) -> None:
         self._client = client
 
     def embed_documents(self, texts: Sequence[str]) -> EmbeddingBatch:
-        return self._embed(texts, input_type="document")
+        texts_list = list(texts)
+        batches = [
+            texts_list[start : start + _DOCUMENT_BATCH_SIZE]
+            for start in range(0, len(texts_list), _DOCUMENT_BATCH_SIZE)
+        ]
+        if len(batches) <= 1:
+            return self._embed(texts_list, input_type="document")
+
+        vectors: list[tuple[float, ...]] = []
+        total_tokens = 0
+        executor = ThreadPoolExecutor(max_workers=_DOCUMENT_CONCURRENCY)
+        pending: list[Future[EmbeddingBatch]] = []
+        next_batch = 0
+        try:
+            while next_batch < min(len(batches), _DOCUMENT_CONCURRENCY):
+                pending.append(
+                    executor.submit(
+                        self._embed, batches[next_batch], input_type="document"
+                    )
+                )
+                next_batch += 1
+
+            while pending:
+                result = pending.pop(0).result()
+                vectors.extend(result.vectors)
+                total_tokens += result.total_tokens
+                if next_batch < len(batches):
+                    pending.append(
+                        executor.submit(
+                            self._embed, batches[next_batch], input_type="document"
+                        )
+                    )
+                    next_batch += 1
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        return EmbeddingBatch(vectors=tuple(vectors), total_tokens=total_tokens)
 
     def embed_query(self, text: str) -> EmbeddingBatch:
         return self._embed([text], input_type="query")

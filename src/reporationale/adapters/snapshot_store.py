@@ -19,6 +19,7 @@ import hashlib
 import os
 import re
 import shutil
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -433,24 +434,71 @@ def recover_interrupted_replacement(
     # repairing or discarding either directory.
 
 
-def publish_staged_directory(staging: Path, target: Path) -> None:
+# A directory `os.rename` can transiently fail with `PermissionError` on
+# Windows when something still holds an OS-level file handle open on one
+# of its contents -- observed in practice immediately after closing a
+# Chroma/SQLite `PersistentClient` following a large write burst, where
+# the underlying handle release can lag microseconds to low-hundreds-of-
+# milliseconds behind `close()` returning. POSIX `rename()` does not have
+# this failure mode at all (it never cares about open handles), so this
+# retry is keyed on the specific exception rather than a platform check:
+# any other `OSError` -- a real permission problem, a missing path, a
+# cross-device rename -- still propagates on its first occurrence.
+_RENAME_RETRY_ATTEMPTS = 5
+_RENAME_RETRY_DELAY_SECONDS = 0.2
+
+
+def _rename_with_retry(
+    source: Path,
+    target: Path,
+    *,
+    rename: Callable[[Path, Path], None],
+    sleep: Callable[[float], None],
+) -> None:
+    last_error: PermissionError | None = None
+    for attempt in range(_RENAME_RETRY_ATTEMPTS):
+        try:
+            rename(source, target)
+            return
+        except PermissionError as error:
+            last_error = error
+            if attempt < _RENAME_RETRY_ATTEMPTS - 1:
+                sleep(_RENAME_RETRY_DELAY_SECONDS)
+    assert last_error is not None  # the loop above only exits via return or this raise
+    raise last_error
+
+
+def publish_staged_directory(
+    staging: Path,
+    target: Path,
+    *,
+    rename: Callable[[Path, Path], None] = os.rename,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
     """Move `staging` to `target`, replacing an existing completed
     artifact at `target` (the caller has already confirmed a replacement
     is authorized) using the fixed backup path a crash can always recover
     from: move the old directory to `backup_path(target)` first, then
     move the new one into place, restoring the backup if that second move
     fails for any reason, and finally removing the (now stale) backup.
+
+    Each individual rename is retried a small bounded number of times on
+    `PermissionError` before giving up (see `_rename_with_retry`); a
+    persistent failure still propagates, and the atomic backup/restore
+    guarantee above is unaffected either way. `rename`/`sleep` are
+    injectable only for tests; real callers use the OS rename and a real
+    sleep.
     """
     if not target.exists():
-        os.rename(staging, target)
+        _rename_with_retry(staging, target, rename=rename, sleep=sleep)
         return
 
     backup = backup_path(target)
-    os.rename(target, backup)
+    _rename_with_retry(target, backup, rename=rename, sleep=sleep)
     try:
-        os.rename(staging, target)
+        _rename_with_retry(staging, target, rename=rename, sleep=sleep)
     except OSError:
-        os.rename(backup, target)
+        _rename_with_retry(backup, target, rename=rename, sleep=sleep)
         raise
     remove_directory(backup)
 

@@ -21,6 +21,7 @@ snapshot is real ingestion progress, but the chunk/embedding/vector-index
 artifacts `ready` requires do not exist yet.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -118,6 +119,28 @@ def _map_adapter_error_to_unavailable(
     )
 
 
+@dataclass(frozen=True)
+class PreflightInspection:
+    """`preflight_repository_reference`'s outcome, plus the GitHub
+    repository metadata and resolved commit sha this workflow already
+    looked up/resolved internally to produce it, when it got that far.
+
+    Lets a caller that needs the same metadata or revision for its next
+    step (building a normalized-source snapshot, for instance) reuse them
+    directly instead of repeating either GitHub call. `metadata` and
+    `resolved_commit_sha` are populated together whenever `result.status`
+    is not `"unsupported"`; both stay `None` for an `"unsupported"`
+    result, since no repository lookup ever completed successfully.
+    `resolved_commit_sha` also stays `None` when `snapshot_root` was
+    omitted, since no revision is resolved on that path (see
+    `preflight_repository_reference`'s docstring).
+    """
+
+    result: PreflightResult
+    metadata: GitHubRepositoryMetadata | None
+    resolved_commit_sha: str | None
+
+
 def preflight_repository_reference(
     raw: str,
     *,
@@ -153,14 +176,45 @@ def preflight_repository_reference(
     `PreflightUnavailable` instead of returning an `unsupported` result, so
     a temporary GitHub problem is never mistaken for "this repository is
     unsupported".
+
+    A thin wrapper around `inspect_repository_reference` for callers that
+    only need the `PreflightResult`; see that function to also reuse the
+    metadata/revision this workflow resolves along the way.
+    """
+    return inspect_repository_reference(
+        raw,
+        github_client=github_client,
+        snapshot_root=snapshot_root,
+        admission_limits=admission_limits,
+    ).result
+
+
+def inspect_repository_reference(
+    raw: str,
+    *,
+    github_client: GitHubClient,
+    snapshot_root: Path | None = None,
+    admission_limits: AdmissionLimits | None = None,
+) -> PreflightInspection:
+    """Same outcomes as `preflight_repository_reference` (see its
+    docstring), returned alongside whichever `GitHubRepositoryMetadata`
+    and resolved commit sha this workflow already obtained while producing
+    them -- so a caller that needs those next (the Streamlit composition
+    root building a normalized-source snapshot after a successful check,
+    for instance) never has to look the repository up or resolve its
+    revision a second time.
     """
     try:
         identity = parse_github_repository_reference(raw)
     except RepositoryReferenceRejected as rejected:
-        reason_code = rejected.reason_code
-        message = rejected.message
-        return PreflightResult(
-            status="unsupported", reason_code=reason_code, message=message
+        return PreflightInspection(
+            result=PreflightResult(
+                status="unsupported",
+                reason_code=rejected.reason_code,
+                message=rejected.message,
+            ),
+            metadata=None,
+            resolved_commit_sha=None,
         )
 
     unavailable: PreflightUnavailable | None = None
@@ -186,8 +240,12 @@ def preflight_repository_reference(
         raise unavailable
     if unsupported_reason is not None:
         reason_code, message = unsupported_reason
-        return PreflightResult(
-            status="unsupported", reason_code=reason_code, message=message
+        return PreflightInspection(
+            result=PreflightResult(
+                status="unsupported", reason_code=reason_code, message=message
+            ),
+            metadata=None,
+            resolved_commit_sha=None,
         )
     if metadata is None:
         raise AssertionError(
@@ -196,9 +254,15 @@ def preflight_repository_reference(
         )
 
     if snapshot_root is None:
-        return PreflightResult(status="indexing_required", repository=metadata.identity)
+        return PreflightInspection(
+            result=PreflightResult(
+                status="indexing_required", repository=metadata.identity
+            ),
+            metadata=metadata,
+            resolved_commit_sha=None,
+        )
 
-    return _preflight_with_snapshot_and_admission(
+    result, resolved_commit_sha = _preflight_with_snapshot_and_admission(
         metadata,
         github_client=github_client,
         snapshot_root=snapshot_root,
@@ -208,6 +272,9 @@ def preflight_repository_reference(
             else DEFAULT_ADMISSION_LIMITS
         ),
     )
+    return PreflightInspection(
+        result=result, metadata=metadata, resolved_commit_sha=resolved_commit_sha
+    )
 
 
 def _preflight_with_snapshot_and_admission(
@@ -216,7 +283,7 @@ def _preflight_with_snapshot_and_admission(
     github_client: GitHubClient,
     snapshot_root: Path,
     admission_limits: AdmissionLimits,
-) -> PreflightResult:
+) -> tuple[PreflightResult, str]:
     unavailable: PreflightUnavailable | None = None
     resolved_commit_sha: str | None = None
     resolved_tree_sha: str | None = None
@@ -244,7 +311,10 @@ def _preflight_with_snapshot_and_admission(
         # ingestion progress, but the chunk/embedding/vector-index artifacts
         # `ready` requires do not exist yet, so `indexing_required` is
         # still the accurate outcome here.
-        return PreflightResult(status="indexing_required", repository=metadata.identity)
+        return (
+            PreflightResult(status="indexing_required", repository=metadata.identity),
+            resolved_commit_sha,
+        )
 
     unavailable = None
     estimate = None
@@ -268,9 +338,15 @@ def _preflight_with_snapshot_and_admission(
 
     decision = evaluate_admission(estimate, admission_limits)
     if not decision.admitted:
-        return PreflightResult(
-            status="unsupported",
-            reason_code=decision.reason_code,
-            message=decision.message,
+        return (
+            PreflightResult(
+                status="unsupported",
+                reason_code=decision.reason_code,
+                message=decision.message,
+            ),
+            resolved_commit_sha,
         )
-    return PreflightResult(status="indexing_required", repository=metadata.identity)
+    return (
+        PreflightResult(status="indexing_required", repository=metadata.identity),
+        resolved_commit_sha,
+    )

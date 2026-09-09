@@ -1,0 +1,17 @@
+# Local Streamlit presentation configuration for the RepoRationale demo:
+# presentation-only, no application, credential, or provider configuration
+# belongs here. Colors reuse the palette explored in the
+# `.local/mockups/streamlit-m6/` design prototype.
+
+[theme]
+base = "dark"
+backgroundColor = "#0a0e13"
+secondaryBackgroundColor = "#10151c"
+textColor = "#e7edf3"
+primaryColor = "#4fd1c5"
+font = "sans-serif"
+
+[client]
+# Hides the "Deploy" button and trims the hamburger menu to essentials;
+# this is a local demonstration, not a hosted deployment.
+toolbarMode = "minimal"

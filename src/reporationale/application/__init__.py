@@ -15,7 +15,9 @@ from reporationale.application.corpus import (
     assemble_repository_corpus,
 )
 from reporationale.application.preflight import (
+    PreflightInspection,
     PreflightUnavailable,
+    inspect_repository_reference,
     preflight_repository_reference,
 )
 
@@ -25,11 +27,13 @@ __all__ = [
     "AnsweringWorkflowError",
     "CitationMarkerMismatchError",
     "CorpusAssemblyError",
+    "PreflightInspection",
     "PreflightUnavailable",
     "RepositoryCorpus",
     "SearchHistoryCapability",
     "UnknownCitationEvidenceError",
     "answer_question",
     "assemble_repository_corpus",
+    "inspect_repository_reference",
     "preflight_repository_reference",
 ]

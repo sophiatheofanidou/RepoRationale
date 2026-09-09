@@ -32,8 +32,10 @@ from reporationale.adapters.snapshot_store import (
 )
 from reporationale.application.chunk_snapshot import build_chunk_snapshot
 from reporationale.application.chunking import CHUNKER_ALGORITHM_VERSION
+from reporationale.application.progress import ProgressEvent
 from reporationale.application.vector_retrieval import (
     SearchHistoryContractError,
+    _embed_documents_with_progress,
     build_vector_snapshot,
     load_search_history_service,
 )
@@ -131,6 +133,112 @@ def _seed_provider(
         query_vectors={"Why polling?": (0.99, 0.05)},
         forbid_document_embedding=forbid_document_embedding,
     )
+
+
+class _ProgressRecordingEmbeddingProvider:
+    def __init__(self, *, fail_on_call: int | None = None) -> None:
+        self.calls: list[list[str]] = []
+        self._fail_on_call = fail_on_call
+
+    def embed_documents(self, texts: Sequence[str]) -> EmbeddingBatch:
+        call_number = len(self.calls) + 1
+        self.calls.append(list(texts))
+        if call_number == self._fail_on_call:
+            raise RuntimeError("progress group failed")
+        return EmbeddingBatch(
+            vectors=tuple(
+                (
+                    float(text.removeprefix("chunk-"))
+                    if text.startswith("chunk-")
+                    else float(index),
+                    1.0,
+                )
+                for index, text in enumerate(texts)
+            ),
+            total_tokens=call_number * 100,
+        )
+
+    def embed_query(self, text: str) -> EmbeddingBatch:
+        raise AssertionError("query embedding is not expected")
+
+
+def test_progress_embedding_groups_preserve_order_tokens_and_exact_counts() -> None:
+    texts = [f"chunk-{index}" for index in range(1100)]
+    provider = _ProgressRecordingEmbeddingProvider()
+    events: list[ProgressEvent] = []
+
+    result = _embed_documents_with_progress(
+        texts=texts, embedding_provider=provider, on_progress=events.append
+    )
+
+    assert [len(call) for call in provider.calls] == [512, 512, 76]
+    assert [text for call in provider.calls for text in call] == texts
+    assert [vector[0] for vector in result.vectors] == [float(i) for i in range(1100)]
+    assert result.total_tokens == 100 + 200 + 300
+    assert [(event.status, event.completed, event.total) for event in events] == [
+        ("started", None, 1100),
+        ("progress", 512, 1100),
+        ("progress", 1024, 1100),
+        ("progress", 1100, 1100),
+        ("completed", 1100, 1100),
+    ]
+
+
+def test_progress_embedding_does_not_report_a_failed_group_as_completed() -> None:
+    texts = [f"chunk-{index}" for index in range(1100)]
+    provider = _ProgressRecordingEmbeddingProvider(fail_on_call=2)
+    events: list[ProgressEvent] = []
+
+    with pytest.raises(RuntimeError, match="progress group failed"):
+        _embed_documents_with_progress(
+            texts=texts, embedding_provider=provider, on_progress=events.append
+        )
+
+    assert [len(call) for call in provider.calls] == [512, 512]
+    assert [(event.status, event.completed) for event in events] == [
+        ("started", None),
+        ("progress", 512),
+    ]
+
+
+def test_build_vector_snapshot_without_progress_keeps_one_full_provider_call(
+    tmp_path: Path,
+) -> None:
+    documents = tuple(
+        sorted(
+            (
+                _document(
+                    f"github:octo-org/example-repo:markdown:doc{index}.md",
+                    f"Distinct rationale paragraph number {index} about the change.",
+                )
+                for index in range(513)
+            ),
+            key=lambda document: document.source_id,
+        )
+    )
+    publish_snapshot(
+        root=tmp_path,
+        repository=_IDENTITY,
+        default_branch="main",
+        resolved_commit_sha=_COMMIT_SHA,
+        documents=documents,
+        counts_by_source_type={"markdown": len(documents)},
+        producer_version="test/0",
+    )
+    snapshot_dir = snapshot_directory(
+        root=tmp_path, identity=_IDENTITY, resolved_commit_sha=_COMMIT_SHA
+    )
+    build_chunk_snapshot(snapshot_dir=snapshot_dir, max_chars=_MAX_CHARS)
+    provider = _ProgressRecordingEmbeddingProvider()
+
+    result = build_vector_snapshot(
+        snapshot_dir=snapshot_dir,
+        max_chars=_MAX_CHARS,
+        embedding_provider=provider,
+    )
+
+    assert len(result.chunks) == 513
+    assert [len(call) for call in provider.calls] == [513]
 
 
 def test_search_history_ranks_expected_evidence_first_with_full_provenance(

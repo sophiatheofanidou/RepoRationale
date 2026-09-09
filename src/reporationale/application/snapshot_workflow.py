@@ -49,6 +49,7 @@ from reporationale.application.corpus import (
     RepositoryCorpus,
     assemble_repository_corpus,
 )
+from reporationale.application.progress import ProgressEvent, ProgressObserver
 from reporationale.domain.snapshot import SnapshotManifest
 from reporationale.domain.source_document import SourceDocument
 
@@ -150,6 +151,7 @@ def build_normalized_source_snapshot(
     force_rebuild: bool = False,
     wall_clock: Callable[[], datetime] = _default_wall_clock,
     monotonic_clock: Callable[[], float] = time.monotonic,
+    on_progress: ProgressObserver | None = None,
 ) -> NormalizedSourceBuildResult:
     """Build, or reuse a compatible existing, normalized-source snapshot.
 
@@ -167,6 +169,13 @@ def build_normalized_source_snapshot(
     `runtime_limits` to what was actually collected (raising
     `RuntimeIngestionLimitExceeded` — publishing nothing — if exceeded),
     persist it atomically, and reload/validate the persisted result.
+
+    `on_progress`, when supplied, is called with a `collecting_sources`
+    then a `publishing_source_snapshot` `ProgressEvent` (each `"started"`
+    then `"completed"` for a fresh build; `"completed"` alone, reporting
+    the reused counts, when a compatible snapshot is reused) -- see
+    `reporationale.application.progress` for the full contract. Omitted
+    (the default), this function's behaviour is unchanged.
 
     Raises whatever `GitHubClient` or the snapshot store raises for any
     request, pagination, validation, or filesystem failure (propagated
@@ -214,6 +223,24 @@ def build_normalized_source_snapshot(
             ),
         )
         phases.append(phase)
+        if on_progress is not None:
+            reused_detail = f"reused {loaded.manifest.source_count:,} sources"
+            on_progress(
+                ProgressEvent(
+                    phase="collecting_sources",
+                    status="completed",
+                    completed=loaded.manifest.source_count,
+                    total=loaded.manifest.source_count,
+                    detail=reused_detail,
+                )
+            )
+            on_progress(
+                ProgressEvent(
+                    phase="publishing_source_snapshot",
+                    status="completed",
+                    detail=reused_detail,
+                )
+            )
         return NormalizedSourceBuildResult(
             manifest=loaded.manifest,
             documents=loaded.documents,
@@ -251,6 +278,9 @@ def build_normalized_source_snapshot(
     # resolution, and admission estimation above are not charged against
     # it: the budget is entered here and cleared on exit regardless of
     # outcome, so it can never affect any other phase.
+    if on_progress is not None:
+        on_progress(ProgressEvent(phase="collecting_sources", status="started"))
+
     corpus: RepositoryCorpus | None = None
     collection_phase: PhaseTiming | None = None
     request_budget_exceeded = False
@@ -290,6 +320,16 @@ def build_normalized_source_snapshot(
     if corpus is None or collection_phase is None:
         raise AssertionError("unreachable: corpus or collection_phase must be set")
     phases.append(collection_phase)
+    if on_progress is not None:
+        on_progress(
+            ProgressEvent(
+                phase="collecting_sources",
+                status="completed",
+                completed=len(corpus.documents),
+                total=len(corpus.documents),
+                detail=f"{len(corpus.documents):,} sources collected",
+            )
+        )
 
     # Enforced on what was *actually* collected — catches whatever the
     # cheap admission estimate could not predict. Raised before any
@@ -300,6 +340,9 @@ def build_normalized_source_snapshot(
         request_count=collection_phase.github_request_count,
         limits=resolved_runtime_limits,
     )
+
+    if on_progress is not None:
+        on_progress(ProgressEvent(phase="publishing_source_snapshot", status="started"))
 
     replace_existing = lookup.kind in ("rebuild_requested", "incompatible")
     _manifest, phase = _measure(
@@ -336,6 +379,16 @@ def build_normalized_source_snapshot(
         ),
     )
     phases.append(phase)
+    if on_progress is not None:
+        on_progress(
+            ProgressEvent(
+                phase="publishing_source_snapshot",
+                status="completed",
+                completed=loaded.manifest.source_count,
+                total=loaded.manifest.source_count,
+                detail=f"{loaded.manifest.source_count:,} sources published",
+            )
+        )
 
     return NormalizedSourceBuildResult(
         manifest=loaded.manifest,
@@ -360,6 +413,7 @@ def rebuild_normalized_source_snapshot(
     producer_version: str | None = None,
     wall_clock: Callable[[], datetime] = _default_wall_clock,
     monotonic_clock: Callable[[], float] = time.monotonic,
+    on_progress: ProgressObserver | None = None,
 ) -> NormalizedSourceBuildResult:
     """Explicit full normalized-source rebuild.
 
@@ -372,7 +426,8 @@ def rebuild_normalized_source_snapshot(
     there is no incremental, background, partial, or cross-repository
     rebuild mode. `admission_limits`/`runtime_limits` default to the
     shared `DEFAULT_ADMISSION_LIMITS`/`DEFAULT_RUNTIME_INGESTION_LIMITS`
-    (see `build_normalized_source_snapshot`) when omitted.
+    (see `build_normalized_source_snapshot`) when omitted. `on_progress`
+    is forwarded unchanged; see `build_normalized_source_snapshot`.
     """
     return build_normalized_source_snapshot(
         metadata,
@@ -384,4 +439,5 @@ def rebuild_normalized_source_snapshot(
         force_rebuild=True,
         wall_clock=wall_clock,
         monotonic_clock=monotonic_clock,
+        on_progress=on_progress,
     )

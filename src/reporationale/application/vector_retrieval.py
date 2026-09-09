@@ -29,7 +29,9 @@ from reporationale.adapters.voyage_embeddings import (
     EmbeddingProvider,
 )
 from reporationale.application.chunking import CHUNKER_ALGORITHM_VERSION
+from reporationale.application.progress import ProgressEvent, ProgressObserver
 from reporationale.domain.chunk import SOURCE_CHUNK_SCHEMA_VERSION, SourceChunk
+from reporationale.domain.embedding import EmbeddingBatch
 from reporationale.domain.retrieval import RankedEvidence
 from reporationale.domain.snapshot import VectorIndexManifest
 
@@ -38,6 +40,13 @@ from reporationale.domain.snapshot import VectorIndexManifest
 _SEARCH_HISTORY_RESULT_LIMIT = 5
 
 _SCORE_KIND = "cosine_distance"
+
+# A progress group contains four of the Voyage adapter's existing 128-text
+# request batches. Passing the whole group through one `embed_documents` call
+# lets that adapter keep four requests in flight while this application layer
+# still reports only work that has actually completed. This remains internal
+# policy rather than an end-user tuning knob.
+_EMBEDDING_PROGRESS_BATCH_SIZE = 512
 
 
 class SearchHistoryContractError(Exception):
@@ -58,12 +67,58 @@ class VectorSnapshotResult:
     reused_existing_artifact: bool
 
 
+def _embed_documents_with_progress(
+    *,
+    texts: Sequence[str],
+    embedding_provider: EmbeddingProvider,
+    on_progress: ProgressObserver,
+) -> EmbeddingBatch:
+    """Embed ordered `texts` in truthful progress groups.
+
+    A progress event is emitted only after its complete group returns and
+    validates through the provider boundary. The final group may be smaller;
+    vectors and provider-reported token usage are accumulated exactly in input
+    order across every successful group.
+    """
+    total = len(texts)
+    on_progress(ProgressEvent(phase="embedding_chunks", status="started", total=total))
+    vectors: list[tuple[float, ...]] = []
+    total_tokens = 0
+    completed = 0
+    for start in range(0, total, _EMBEDDING_PROGRESS_BATCH_SIZE):
+        batch_texts = texts[start : start + _EMBEDDING_PROGRESS_BATCH_SIZE]
+        batch_result = embedding_provider.embed_documents(batch_texts)
+        vectors.extend(batch_result.vectors)
+        total_tokens += batch_result.total_tokens
+        completed += len(batch_texts)
+        on_progress(
+            ProgressEvent(
+                phase="embedding_chunks",
+                status="progress",
+                completed=completed,
+                total=total,
+            )
+        )
+    result = EmbeddingBatch(vectors=tuple(vectors), total_tokens=total_tokens)
+    on_progress(
+        ProgressEvent(
+            phase="embedding_chunks",
+            status="completed",
+            completed=total,
+            total=total,
+            detail=f"{total:,} chunks embedded",
+        )
+    )
+    return result
+
+
 def build_vector_snapshot(
     *,
     snapshot_dir: Path,
     max_chars: int,
     embedding_provider: EmbeddingProvider,
     force_rebuild: bool = False,
+    on_progress: ProgressObserver | None = None,
 ) -> VectorSnapshotResult:
     """Build, or reuse a compatible existing, persisted vector index for the
     derived chunk artifact at `snapshot_dir`.
@@ -79,6 +134,16 @@ def build_vector_snapshot(
     `force_rebuild=True` rebuilds only the vector index from the
     already-persisted chunk artifact; it never calls GitHub, never rebuilds
     the normalized-source snapshot, and never re-chunks anything.
+
+    `on_progress`, when supplied, is called with `embedding_chunks` events
+    (`"started"`, then one `"progress"` event per completed progress group
+    carrying `completed`/`total` chunk counts, then `"completed"`; or `"completed"`
+    alone, reporting the reused chunk count, when a compatible index is
+    reused) followed by `building_vector_index` events (`"started"`/
+    `"completed"` for a fresh build; `"completed"` alone when reused) --
+    see `reporationale.application.progress`. Omitted (the default), this
+    function's behaviour, including which embedding calls are made and in
+    what batches, is completely unchanged.
     """
     source_snapshot = load_snapshot(snapshot_dir)
     chunk_artifact = load_chunk_artifact(
@@ -105,15 +170,41 @@ def build_vector_snapshot(
 
     if lookup.kind == "compatible":
         assert lookup.manifest is not None  # guaranteed by "compatible"
+        if on_progress is not None:
+            reused_count = len(chunk_artifact.chunks)
+            on_progress(
+                ProgressEvent(
+                    phase="embedding_chunks",
+                    status="completed",
+                    completed=reused_count,
+                    total=reused_count,
+                    detail=f"reused {reused_count:,} embeddings",
+                )
+            )
+            on_progress(
+                ProgressEvent(
+                    phase="building_vector_index",
+                    status="completed",
+                    detail="reused existing vector index",
+                )
+            )
         return VectorSnapshotResult(
             manifest=lookup.manifest,
             chunks=chunk_artifact.chunks,
             reused_existing_artifact=True,
         )
 
-    embedding_batch = embedding_provider.embed_documents(
-        [chunk.text for chunk in chunk_artifact.chunks]
-    )
+    texts = [chunk.text for chunk in chunk_artifact.chunks]
+    if on_progress is None:
+        embedding_batch = embedding_provider.embed_documents(texts)
+    else:
+        embedding_batch = _embed_documents_with_progress(
+            texts=texts,
+            embedding_provider=embedding_provider,
+            on_progress=on_progress,
+        )
+        on_progress(ProgressEvent(phase="building_vector_index", status="started"))
+
     manifest = publish_vector_index(
         snapshot_dir=snapshot_dir,
         chunks=chunk_artifact.chunks,
@@ -126,6 +217,14 @@ def build_vector_snapshot(
         chunks_digest=chunk_artifact.manifest.chunks_digest,
         embedding_model=VOYAGE_EMBEDDING_MODEL,
     )
+    if on_progress is not None:
+        on_progress(
+            ProgressEvent(
+                phase="building_vector_index",
+                status="completed",
+                detail=f"{len(chunk_artifact.chunks):,} chunks indexed",
+            )
+        )
     return VectorSnapshotResult(
         manifest=manifest,
         chunks=chunk_artifact.chunks,
@@ -210,6 +309,7 @@ def load_search_history_service(
     max_chars: int,
     embedding_provider: EmbeddingProvider,
     force_rebuild: bool = False,
+    on_progress: ProgressObserver | None = None,
 ) -> SearchHistoryService:
     """Build or reuse the vector index at `snapshot_dir`, then open it for
     repeated querying and return a ready `SearchHistoryService`.
@@ -219,14 +319,24 @@ def load_search_history_service(
     what lets a fresh application instance answer questions from an
     already-built index across a restart without re-embedding the
     repository.
+
+    `on_progress`, when supplied, receives `build_vector_snapshot`'s
+    `embedding_chunks`/`building_vector_index` events (see its docstring)
+    followed by a `validating_vector_index` event bracketing this
+    function's own reopen-and-validate step, which always does real work
+    -- even a reused index is reopened and revalidated here, every call.
+    Omitted (the default), this function's behaviour is unchanged.
     """
     build_result = build_vector_snapshot(
         snapshot_dir=snapshot_dir,
         max_chars=max_chars,
         embedding_provider=embedding_provider,
         force_rebuild=force_rebuild,
+        on_progress=on_progress,
     )
     manifest = build_result.manifest
+    if on_progress is not None:
+        on_progress(ProgressEvent(phase="validating_vector_index", status="started"))
     vector_index = open_vector_index(
         snapshot_dir=snapshot_dir,
         expected_chunks=build_result.chunks,
@@ -239,6 +349,16 @@ def load_search_history_service(
         expected_embedding_model=manifest.embedding_model,
         expected_embedding_dimension=manifest.embedding_dimension,
     )
+    if on_progress is not None:
+        on_progress(
+            ProgressEvent(
+                phase="validating_vector_index",
+                status="completed",
+                completed=len(build_result.chunks),
+                total=len(build_result.chunks),
+                detail=f"{len(build_result.chunks):,} chunks validated",
+            )
+        )
     return SearchHistoryService(
         chunks=build_result.chunks,
         vector_index=vector_index,

@@ -7,6 +7,8 @@ and deterministic fixtures are used; no real network access or `GITHUB_TOKEN`
 is used anywhere in this file.
 """
 
+from pathlib import Path
+
 import httpx
 import pytest
 from github_test_support import json_response, load_fixture, mock_transport
@@ -14,11 +16,19 @@ from github_test_support import json_response, load_fixture, mock_transport
 from reporationale.adapters.github import GitHubClient
 from reporationale.application import (
     PreflightUnavailable,
+    inspect_repository_reference,
     preflight_repository_reference,
 )
+from reporationale.application.admission import AdmissionLimits
 from reporationale.domain import PreflightResult
 
 _SECRET_TOKEN = "super-secret-test-token-value"
+_GENEROUS_LIMITS = AdmissionLimits(
+    max_all_issues_and_pull_requests=1000,
+    max_closed_pull_requests=1000,
+    max_commits=1000,
+    max_tree_entries=1000,
+)
 
 
 def _client(handler: httpx.MockTransport) -> GitHubClient:
@@ -338,6 +348,95 @@ def test_no_result_or_exception_exposes_the_token() -> None:
     assert error.__context__ is None
     assert not hasattr(error, "request")
     assert not hasattr(error, "response")
+
+
+def test_inspect_repository_reference_makes_exactly_one_lookup_and_one_revision_resolution(
+    tmp_path: Path,
+) -> None:
+    """A successful check (repository found, no compatible snapshot yet,
+    admitted) must call `GET /repos/{owner}/{repo}` and resolve the
+    revision exactly once each -- a caller that reuses `inspect_repository_
+    reference`'s returned metadata/resolved commit sha must never need a
+    second repository lookup or revision resolution for the same check."""
+    repository_lookup_calls = 0
+    revision_resolution_calls = 0
+    tree_sha = "d" * 40
+    commit_sha = "c" * 40
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal repository_lookup_calls, revision_resolution_calls
+        path = request.url.path
+        if path == "/repos/octo-org/example-repo":
+            repository_lookup_calls += 1
+            return json_response(200, load_fixture("repository_public.json"))
+        if path == "/repos/octo-org/example-repo/commits/main":
+            revision_resolution_calls += 1
+            return json_response(
+                200, {"sha": commit_sha, "commit": {"tree": {"sha": tree_sha}}}
+            )
+        if path in (
+            "/repos/octo-org/example-repo/issues",
+            "/repos/octo-org/example-repo/pulls",
+            "/repos/octo-org/example-repo/commits",
+        ):
+            return json_response(200, [])
+        if path == f"/repos/octo-org/example-repo/git/trees/{tree_sha}":
+            return json_response(200, {"sha": tree_sha, "truncated": False, "tree": []})
+        raise AssertionError(f"unexpected request: {path}")
+
+    inspection = inspect_repository_reference(
+        "octo-org/example-repo",
+        github_client=_client(mock_transport(handler)),
+        snapshot_root=tmp_path,
+        admission_limits=_GENEROUS_LIMITS,
+    )
+
+    assert repository_lookup_calls == 1
+    assert revision_resolution_calls == 1
+    assert inspection.result.status == "indexing_required"
+    assert inspection.metadata is not None
+    assert inspection.metadata.identity.owner == "octo-org"
+    assert inspection.metadata.identity.name == "example-repo"
+    assert inspection.resolved_commit_sha == commit_sha
+
+
+def test_inspect_repository_reference_returns_no_metadata_for_an_unsupported_reference() -> (
+    None
+):
+    """An unsupported outcome (malformed reference, not found, private)
+    never carries metadata or a resolved commit sha -- there is nothing a
+    caller could safely reuse."""
+    handler = mock_transport(
+        lambda request: json_response(404, {"message": "Not Found"})
+    )
+
+    inspection = inspect_repository_reference(
+        "octo-org/example-repo", github_client=_client(handler)
+    )
+
+    assert inspection.result.status == "unsupported"
+    assert inspection.metadata is None
+    assert inspection.resolved_commit_sha is None
+
+
+def test_preflight_repository_reference_matches_inspect_repository_references_result() -> (
+    None
+):
+    """The thin `PreflightResult`-only wrapper must return exactly the same
+    result `inspect_repository_reference` computes, not a separately
+    derived one."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return json_response(200, load_fixture("repository_public.json"))
+
+    wrapper_result = preflight_repository_reference(
+        "octo-org/example-repo", github_client=_client(mock_transport(handler))
+    )
+    inspection = inspect_repository_reference(
+        "octo-org/example-repo", github_client=_client(mock_transport(handler))
+    )
+
+    assert wrapper_result == inspection.result
 
 
 def test_no_httpx_object_crosses_the_application_boundary() -> None:

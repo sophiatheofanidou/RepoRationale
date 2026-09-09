@@ -395,7 +395,9 @@ def test_publish_and_load_round_trip_persists_query_usage(tmp_path: Path) -> Non
     assert loaded.query_usage == query_usage
     assert "Query embedding requests: 4" in loaded.report_markdown
     assert "Query embedding tokens: 49" in loaded.report_markdown
-    assert "Query usage includes the refinement diagnostic: yes" in loaded.report_markdown
+    assert (
+        "Query usage includes the refinement diagnostic: yes" in loaded.report_markdown
+    )
 
 
 def test_publish_and_load_round_trip_persists_measurement_limitations(

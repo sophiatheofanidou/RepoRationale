@@ -437,7 +437,9 @@ def test_answer_aggregate_metrics_computes_outcome_accuracy_and_totals() -> None
         ),
     ]
 
-    metrics = compute_answer_aggregate_metrics(question_set, results, split="development")
+    metrics = compute_answer_aggregate_metrics(
+        question_set, results, split="development"
+    )
     assert metrics.case_count == 2
     assert metrics.outcome_accuracy == pytest.approx(0.5)
     assert metrics.total_input_tokens == 300

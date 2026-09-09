@@ -108,7 +108,10 @@ def _summary() -> EvaluationSummary:
 
 def test_report_is_readable_markdown_with_expected_sections() -> None:
     report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+        manifest=_manifest(),
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        summary=_summary(),
     )
 
     assert report.startswith("# Evaluation run `gson-2026-09-10`")
@@ -132,7 +135,10 @@ def test_report_is_readable_markdown_with_expected_sections() -> None:
 
 def test_report_shows_query_usage_and_combined_voyage_cost() -> None:
     report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+        manifest=_manifest(),
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        summary=_summary(),
     )
 
     assert "Query embedding requests: 4" in report
@@ -172,7 +178,10 @@ def test_report_shows_measurement_limitations_separately_from_skipped_items() ->
         ),
     )
     report = render_markdown_report(
-        manifest=_manifest(), indexing=indexing, query_usage=_query_usage(), summary=_summary()
+        manifest=_manifest(),
+        indexing=indexing,
+        query_usage=_query_usage(),
+        summary=_summary(),
     )
     assert "Measurement limitations:" in report
     assert (
@@ -187,14 +196,20 @@ def test_report_omits_measurement_limitations_section_when_none_are_known() -> N
     rendered as if a limitation exists; the section must simply be
     absent, distinct from ever claiming zero limitations are known."""
     report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+        manifest=_manifest(),
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        summary=_summary(),
     )
     assert "Measurement limitations:" not in report
 
 
 def test_report_omits_pricing_basis_section_when_none_are_recorded() -> None:
     report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+        manifest=_manifest(),
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        summary=_summary(),
     )
     assert "## Pricing basis" not in report
 
@@ -220,7 +235,10 @@ def test_report_shows_pricing_basis_when_recorded() -> None:
         }
     )
     report = render_markdown_report(
-        manifest=manifest, indexing=_indexing(), query_usage=_query_usage(), summary=_summary()
+        manifest=manifest,
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        summary=_summary(),
     )
     assert "## Pricing basis" in report
     assert "| anthropic | claude-opus-5 | 5.00 | 25.00 | 2026-09-07 |" in report
@@ -237,7 +255,10 @@ def test_report_handles_missing_answer_metrics() -> None:
         answer_metrics=None,
     )
     report = render_markdown_report(
-        manifest=_manifest(), indexing=_indexing(), query_usage=_query_usage(), summary=summary
+        manifest=_manifest(),
+        indexing=_indexing(),
+        query_usage=_query_usage(),
+        summary=summary,
     )
     assert "**Split:** held_out" in report
     assert "No retrieval results recorded for this run." in report

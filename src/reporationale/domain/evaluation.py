@@ -648,8 +648,6 @@ class RunManifest(BaseModel):
         for basis in self.pricing_bases:
             key = (basis.provider, basis.model)
             if key in seen:
-                raise ValueError(
-                    f"pricing_bases repeats provider/model pair {key!r}"
-                )
+                raise ValueError(f"pricing_bases repeats provider/model pair {key!r}")
             seen.add(key)
         return self

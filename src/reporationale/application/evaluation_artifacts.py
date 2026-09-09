@@ -111,7 +111,9 @@ def _validate_inputs(
         query_usage=query_usage, retrieval_results=retrieval_results
     )
     if usage_mismatch is not None:
-        raise ValueError(f"Cannot use an inconsistent evaluation run: {usage_mismatch}.")
+        raise ValueError(
+            f"Cannot use an inconsistent evaluation run: {usage_mismatch}."
+        )
 
 
 def publish_evaluation_run(

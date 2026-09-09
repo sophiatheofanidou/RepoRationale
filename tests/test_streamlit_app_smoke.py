@@ -114,7 +114,7 @@ def test_size_rejection_uses_product_copy_and_only_the_exceeded_limit(
     rendered = next(
         markdown.value
         for markdown in at.markdown
-        if "rr-info-card-title\">Unsupported repository" in markdown.value
+        if 'rr-info-card-title">Unsupported repository' in markdown.value
     )
     assert "torvalds/linux" in rendered
     assert "larger than RepoRationale currently supports" in rendered

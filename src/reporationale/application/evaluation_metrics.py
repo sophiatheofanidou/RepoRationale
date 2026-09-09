@@ -197,7 +197,9 @@ def compute_answer_aggregate_metrics(
     cover every case in `split`.
     """
     cases_by_id = {case.case_id: case for case in question_set.cases}
-    split_case_ids = {case.case_id for case in question_set.cases if case.split == split}
+    split_case_ids = {
+        case.case_id for case in question_set.cases if case.split == split
+    }
     seen_case_ids: set[str] = set()
 
     correct = 0

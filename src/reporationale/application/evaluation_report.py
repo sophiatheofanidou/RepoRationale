@@ -74,7 +74,9 @@ def render_markdown_report(
     if manifest.pricing_bases:
         lines.append("## Pricing basis")
         lines.append("")
-        lines.append("| Provider | Model | Input $/MTok | Output $/MTok | Verified on |")
+        lines.append(
+            "| Provider | Model | Input $/MTok | Output $/MTok | Verified on |"
+        )
         lines.append("| --- | --- | ---: | ---: | --- |")
         for basis in manifest.pricing_bases:
             output_price = (

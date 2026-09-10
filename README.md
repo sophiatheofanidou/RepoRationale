@@ -207,3 +207,7 @@ tasks. Product and technical decisions, Git history, commits, tags, and
 publication remained under explicit owner approval. The public collaboration
 guides record this process without replacing the product, architecture,
 decision, or evaluation documents as sources of truth.
+
+## License
+
+RepoRationale is available under the [MIT License](LICENSE).

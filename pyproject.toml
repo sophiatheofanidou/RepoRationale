@@ -7,6 +7,8 @@ name = "reporationale"
 version = "0.1.0"
 description = "Evidence-grounded agentic RAG for recovering the rationale behind technical decisions from repository history."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "anthropic>=1.4.0",

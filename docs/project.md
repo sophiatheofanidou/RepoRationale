@@ -1,12 +1,9 @@
-# RepoRationale — Project Definition
-
-**Status:** Approved for MVP  
-**Last updated:** 2026-09-08
+# RepoRationale: Project Definition
 
 This document is the source of truth for what RepoRationale is, who it is for,
-what belongs in the MVP, and what success means. Technical implementation
-details belong in `architecture.md`; the reasons behind accepted choices belong
-in `decisions.md`; current progress belongs in `plan.md`.
+and what belongs in its first release. The release implements the project's MVP
+(minimum viable product): the smallest complete version that solves the core
+user problem and can be evaluated end to end.
 
 ## 1. One-sentence definition
 
@@ -14,7 +11,7 @@ RepoRationale is a small, evidence-grounded agentic RAG application that
 retrieves the documented reasons behind technical changes in a GitHub
 repository.
 
-**Working tagline:** Ask why the code changed. Get the evidence behind it.
+**Tagline:** Ask why the code changed. Get the evidence behind it.
 
 ## 2. Target user
 
@@ -28,27 +25,18 @@ This includes:
 - a developer returning to a subsystem after a long time;
 - a reviewer who needs historical context for a change.
 
-RepoRationale is not aimed primarily at small, new repositories whose history
-is already fully known to their authors.
-
-### Where the product is most valuable
-
-The product is intended for large, long-lived repositories and engineering
+The product is most valuable in large, long-lived repositories and engineering
 teams where relevant context is distributed across years of pull requests,
 issues, commits, review discussions, and documentation. Its value increases
 when no single developer knows the complete history and manual investigation
 requires searching across many possible sources.
 
-For a small repository with a short history, direct Git inspection or a general
-coding agent may be simpler and equally effective. RepoRationale does not claim
-that pre-indexed retrieval is the best solution at every repository size.
-
 ## 3. Problem
 
-The current code shows what the system does, but it often does not show why a
-particular implementation, restriction, or workaround exists. That rationale
-may be scattered across pull requests, issues, commit messages, review
-discussions, and design documents.
+When developers read an unfamiliar codebase, the code usually shows what the
+system does but not why a particular implementation, restriction, or workaround
+exists. That rationale may be scattered across pull requests, issues, commit
+messages, review discussions, and design documents.
 
 To recover it manually, a developer may need to:
 
@@ -59,17 +47,14 @@ To recover it manually, a developer may need to:
 5. search repository documentation;
 6. ask a more experienced teammate if the written record is incomplete.
 
-The cost is not merely historical curiosity. Missing context can lead a
-developer to repeat a rejected approach, remove an intentional safeguard, or
-reintroduce a previously fixed problem.
+Missing this context can lead a developer to repeat a rejected approach, remove
+an intentional safeguard, or reintroduce a previously fixed problem.
 
-## 4. Primary job to be done
+RepoRationale's core job is to recover the documented reasons and prior
+decisions behind unfamiliar code, so that a developer can make a more informed
+change without manually searching the repository's history.
 
-> When I need to understand or change unfamiliar code, help me recover the
-> documented reasons and prior decisions behind it, so that I can make a more
-> informed change without manually searching the repository history.
-
-## 5. Questions the MVP should answer
+## 4. Example questions
 
 Representative questions include:
 
@@ -82,16 +67,68 @@ Representative questions include:
 - Is there a newer decision that supersedes the original one?
 - Is there any documented rationale for this implementation?
 
-The MVP focuses on questions about recorded history and decisions. It is not a
-general-purpose code explanation or code-generation assistant.
+RepoRationale may also answer broader repository questions when the supported
+history contains sufficient evidence. The boundary is evidentiary: it is not a
+general-purpose assistant that explains the current source code or answers from
+unsupported model knowledge alone.
+
+## 5. Why a dedicated evidence workflow
+
+A general coding agent with repository access can investigate history on demand
+and may be the simplest option for a one-off question or a small repository.
+RepoRationale is not designed on the assumption that it will always search
+better. It provides a dedicated workflow in which the evidence available to the
+model, its search behaviour, citations, abstentions, and failures are bounded
+and inspectable.
+
+The workflow makes several guarantees explicit:
+
+- retrieval happens before the model can answer;
+- every search and evidence-sufficiency assessment is recorded;
+- the number of agent-requested refinements is limited;
+- citations must resolve to evidence retrieved during the current run;
+- insufficient evidence is a valid structured result rather than an invitation
+  to guess.
+
+These controls do not make hallucinations impossible or prove that every cited
+claim is correct. They create a stable evidence boundary around the model and
+make retrieval failures, grounding failures, and answer failures easier to
+distinguish, test, and evaluate.
+
+The reusable index supports this workflow by providing one consistent evidence
+corpus, semantic retrieval across historical source types, and less repeated
+exploration when many questions target the same repository. It introduces an
+up-front indexing cost and has not been shown to outperform direct agentic
+exploration.
+
+### Existing alternatives and positioning
+
+RepoRationale does not claim to be the first way to recover change rationale.
+Commercial context engines such as
+[Unblocked](https://docs.getunblocked.com/what-is-unblocked) already answer
+engineering questions across code, pull requests, issues, and team knowledge
+with source links. Research systems such as
+[ARGUS](https://arxiv.org/abs/2604.10345) and the
+[Kantara-based approach](https://arxiv.org/abs/2506.11005) also analyze
+rationale from software history, while general coding agents and native GitHub
+search can investigate the same sources on demand.
+
+RepoRationale's contribution is deliberately narrower: an inspectable
+implementation and reproducible evaluation of a bounded, citation-validated
+evidence workflow built on a reusable index. It does not claim superiority
+beyond what the recorded [evaluation](evaluation.md) supports.
 
 ## 6. Product behaviour
 
 The user supplies one public GitHub `owner/repository`. A lightweight preflight
 validates access, checks for a reusable local snapshot, and determines whether
-the estimated complete supported corpus is within tested MVP limits. The UI
-then reports that an index is ready, indexing is required, or the repository is
+the estimated complete supported corpus is within tested limits. The UI then
+reports that an index is ready, indexing is required, or the repository is
 unsupported.
+
+Temporary external failures are reported separately from unsupported
+repositories so the user can retry without receiving a false compatibility
+result.
 
 Indexing begins only after explicit confirmation, displays phase-level
 progress, and persists its completed result locally. A compatible completed
@@ -99,9 +136,10 @@ snapshot is reused across page, application, and computer restarts. If the
 repository has changed, the user can continue with the clearly identified
 existing snapshot or request a manual full rebuild.
 
-Once an index is ready, the user asks a natural-language question. The system
-searches the active repository snapshot, may refine the search through a small
-bounded tool-calling loop, and returns one of two outcomes:
+Once an index is ready, the user asks a natural-language question. The
+application searches the active repository snapshot with that exact question.
+After inspecting the results, the bounded agent may request a small number of
+narrower searches before producing one of two outcomes.
 
 ### Evidence-grounded answer
 
@@ -119,121 +157,59 @@ If the available sources identify a change but do not document its reason, the
 system says so explicitly. It must not infer an author's intent from the code
 alone and present that inference as fact.
 
-### Bounded conversational follow-up
+### Follow-up questions
 
-Within the current session, the user may continue with a bounded follow-up
-question that refers back to an earlier question or answer, such as "was
-that alternative reconsidered later?" Follow-up context is tied to the
-current session and the one active repository snapshot: it does not survive
-a browser refresh, a new session, an application restart, or a change of
-repository or snapshot, and it is never persisted. A prior generated answer
-helps the system interpret what a follow-up refers to, but it is never
-treated as evidence in its own right; every answer, including a follow-up's,
-is grounded only in evidence retrieved during its own run.
+During the current investigation, the user may ask bounded follow-up questions
+that refer to earlier turns. Context is limited to the active repository
+snapshot and is not persisted; it is cleared by a refresh, restart, rebuild, or
+repository change. Prior answers may resolve references, but they never count
+as evidence. Every answer is grounded only in evidence retrieved for that run.
 
-## 7. Why indexed retrieval instead of direct AI exploration
+The complete indexing and question-answering workflows are described in the
+[architecture](architecture.md).
 
-A general AI coding agent with Git and GitHub access is a valid alternative. It
-can inspect history and read candidate sources on demand. RepoRationale uses a
-pre-indexed retrieval layer because the target setting contains more historical
-material than is practical to inspect from scratch for every question.
+<p align="center">
+  <img
+    src="assets/screenshots/grounded-answer-gson.png"
+    alt="RepoRationale answering a question about Gson with an expanded source citation"
+    width="900"
+  />
+</p>
 
-The indexed approach is expected to provide:
+<p align="center"><em>A grounded answer from a reusable Gson snapshot, with
+the supporting repository evidence available for direct inspection.</em></p>
 
-- semantic retrieval when the question and historical source use different
-  terminology;
-- ranked evidence selection across many candidate pull requests, issues, and
-  documents;
-- lower repeated-search work when many questions target the same repository;
-- predictable provenance and citation metadata;
-- a constrained evidence set from which the answering model must work.
+## 7. First-release scope
 
-The bounded agent does not replace retrieval. The application first searches
-with the user's exact question; after inspecting those results, the agent may
-formulate a narrower refinement over the index. Whether this approach actually
-outperforms lexical search or direct agentic exploration is an evaluation
-question, not an assumption. Small repositories may not benefit enough to
-justify indexing.
+The first release supports:
 
-### Existing alternatives and positioning
-
-RepoRationale does not claim to be the first way to recover change rationale.
-Commercial context engines such as [Unblocked](https://docs.getunblocked.com/what-is-unblocked)
-already answer engineering questions across code, pull requests, issues, and
-team knowledge with source links. Research systems such as
-[ARGUS](https://arxiv.org/abs/2604.10345) and the
-[Kantara-based approach](https://arxiv.org/abs/2506.11005) also extract and
-analyze rationale from software history, while general coding agents and native
-GitHub search can investigate the same sources on demand.
-
-Compared with a general coding agent that explores Git and GitHub on demand for
-each question, RepoRationale prepares one reusable repository index and
-constrains its agent to ranked evidence with explicit provenance, citation
-validation, and abstention. Its intended value is more predictable, repeatable
-investigation when many questions target a large, long-lived repository. Its
-portfolio value is the inspectable implementation and reproducible evaluation
-of that trade-off; it does not claim superiority until the comparison is
-measured.
-
-## 8. MVP scope
-
-The MVP supports:
-
-- user selection of one supported public GitHub repository at a time;
+- one public GitHub repository at a time;
+- complete ingestion of supported pull request, issue, commit-message, and
+  Markdown-document history for every accepted repository;
 - preflight validation, tested ingestion limits, explicit indexing
   confirmation, and phase-level progress;
-- merged and closed-unmerged pull request titles, descriptions, and supported
-  conversation and review content;
-- all open and closed GitHub issues;
-- commit messages and source links;
-- Markdown documentation stored in the repository;
-- complete ingestion of those supported sources for every accepted repository;
-- normalization of all supported sources into a common internal document form;
-- source-aware chunking with one embedding per chunk;
-- reusable local normalized snapshots and persistent vector indexes;
-- a `search_history` tool over the indexed sources;
-- a bounded agent that can make a small number of retrieval calls;
-- natural-language answers with verifiable citations;
+- reusable local snapshots, persistent indexes, and manual full rebuilds;
+- semantic retrieval and a bounded number of agent-requested refinements;
+- natural-language answers with verifiable source links;
 - explicit abstention when evidence is insufficient;
-- bounded, session-scoped conversational follow-up questions tied to one
-  active repository snapshot, without durable or cross-session conversation
-  memory;
-- manual, repeatable repository indexing;
-- a small local demonstration interface;
-- bring-your-own GitHub, Voyage, and Anthropic credentials through local secret
-  configuration;
-- automated tests and an evaluation harness.
+- bounded follow-up questions within one repository investigation;
+- a local Streamlit demonstration interface;
+- user-supplied GitHub, Voyage, and Anthropic credentials;
+- automated tests and a reproducible evaluation harness.
 
-## 9. Explicit non-goals
+The first release deliberately excludes private-repository authentication,
+additional Git platforms or external knowledge systems, multiple repositories
+queried as one corpus, automatic synchronization, partial or silently
+truncated indexing, repositories beyond the tested limits, durable conversation
+history, cloud or multi-user deployment, open-ended or collaborating agents,
+MCP exposure, and code-generation or repository-modification capabilities.
 
-The MVP does not include:
+These are product boundaries, not unfinished first-release tasks. Technical
+components and provider responsibilities are documented in the
+[architecture](architecture.md), while the reasoning behind the boundaries is
+recorded in the [decision log](decisions.md).
 
-- private-repository access or OAuth/permission-management flows;
-- end-user model, chunking, or vector-store selection;
-- Azure DevOps, GitLab, Bitbucket, or other Git platforms;
-- Slack, Confluence, Jira, PDFs, or external document stores;
-- cross-source access control or enterprise permissions;
-- automatic synchronization, webhooks, or production re-indexing;
-- folder-level, date-window, or silently truncated partial indexing;
-- repositories beyond the measured MVP ingestion limits;
-- multiple repositories queried as one knowledge base;
-- background job queues or multi-user ingestion management;
-- cloud deployment or production-scale infrastructure;
-- MCP exposure;
-- multiple collaborating agents or an open-ended autonomous agent;
-- code generation, code review, or modification of repository content;
-- fine-tuning an LLM;
-- durable or persisted conversation history: conversation context exists only
-  for the current session and its one active repository snapshot and does not
-  survive a refresh, a new session, a restart, or a repository or snapshot
-  change; this does not affect the local persistence of completed repository
-  snapshots and indexes described elsewhere in this document;
-- general questions whose answer comes only from the current source code rather
-  than the repository's recorded history.
-
-These exclusions are product boundaries, not missing tasks in the MVP plan.
-
-## 10. Product principles
+## 8. Product principles
 
 ### Evidence before fluency
 
@@ -242,8 +218,10 @@ unsupported answer.
 
 ### Abstention is a valid result
 
-The system must distinguish "the repository does not document this" from "the
-retrieval system failed to find it."
+The system must not turn either missing documentation or unsuccessful retrieval
+into a fabricated rationale. When the retrieved evidence is insufficient, it
+reports that limitation explicitly without claiming that the repository
+contains no answer.
 
 ### Bounded agent behaviour
 
@@ -255,56 +233,48 @@ iterations remain deliberately limited and observable.
 Every indexed item retains enough metadata to identify and link to its original
 source.
 
-### Small MVP, real evaluation
+### Small product, real evaluation
 
 The project prioritizes a narrow end-to-end implementation and measured results
 over a wide set of partially implemented integrations.
 
 ### Future portability without speculative implementation
 
-GitHub-specific ingestion is kept separate from the retrieval core, and
-provider-specific AI calls are isolated. No additional platform or provider is
-implemented until there is a concrete reason to do so.
+Source-specific ingestion is kept separate from the retrieval core, and
+provider-specific AI calls are isolated. Additional platforms and providers are
+not implemented without a concrete reason.
 
-## 11. MVP success criteria
+## 9. Future direction
 
-The MVP is complete when:
+Later versions could explore:
 
-- a public GitHub repository can be indexed repeatably;
-- preflight reuses a ready local snapshot, requests indexing when necessary,
-  and rejects unsupported repositories before embedding;
-- a completed local index remains usable after application restart;
-- each indexed item retains valid provenance and a source URL;
-- representative rationale questions retrieve the expected evidence;
-- the bounded agent can refine a search when initial evidence is inadequate;
-- answers cite only sources returned during retrieval;
-- the system abstains on deliberately unanswerable questions;
-- retrieval and answer behaviour are covered by automated tests;
-- a documented evaluation compares at least lexical and vector retrieval;
-- a reviewer can run a small local demo by following the README.
+- raising or adapting repository limits after further performance measurement,
+  while preserving the complete-corpus-or-reject guarantee;
+- replacing the local vector store with PostgreSQL and pgvector;
+- using GitHub GraphQL or incremental synchronization to reduce collection
+  work;
+- indexing additional GitHub content such as Discussions;
+- supporting other platforms and sources, including Azure DevOps, Slack, and
+  PDFs;
+- persisting investigation and conversation history across sessions;
+- exposing retrieval through an API or MCP-compatible interface.
 
-Numerical quality thresholds and the evaluation corpus will be defined in
-`evaluation.md` before implementation of the final evaluation harness.
+These are possible extensions, not roadmap commitments. They require explicit
+product and technical decisions before implementation.
 
-## 12. Future direction, not roadmap commitment
-
-The internal source-document boundary should make future experiments with other
-Git platforms or document types possible. The retrieval capability could also
-be exposed to other AI assistants through an API or MCP-style interface.
-
-Possible future sources include Azure DevOps, PDFs, or team knowledge systems.
-They are not promised features and have no design or implementation work in the
-MVP.
-
-## 13. Known product limitations
+## 10. Known product limitations
 
 - The system cannot recover rationale that was never recorded.
 - A related citation does not automatically prove a generated claim; citation
-  support must be evaluated.
-- Small repositories may be served equally well by direct agentic search.
-- A general coding agent with repository access is a valid alternative and an
-  important comparison point.
+  support must still be evaluated.
+- Direct repository inspection or a general coding agent may be equally
+  effective on small repositories.
 - Repository history may contain outdated, conflicting, or superseded
   decisions.
+- Initial indexing time and cost grow with repository history and external API
+  performance.
+- The first release is a local, single-user demonstration rather than a
+  production service.
 
-The project should expose these limitations rather than conceal them.
+The project exposes these limitations rather than concealing them. Their
+measured impact is reported in the [evaluation](evaluation.md).

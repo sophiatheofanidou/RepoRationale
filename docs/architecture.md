@@ -1,372 +1,241 @@
-# RepoRationale — Architecture
+# RepoRationale: Architecture
 
-**Status:** Approved for MVP  
-**Last updated:** 2026-09-08
+This document describes the stable structure of RepoRationale: how repository
+history becomes searchable evidence, how a question becomes a cited answer,
+and which component owns each responsibility. The architecture is expressed in
+technology-independent terms so that its roles and boundaries remain valid if
+an implementation changes. The concrete technologies used by the first release
+are identified separately in section 5.
 
-This document explains how RepoRationale is built: how repository history
-becomes searchable evidence, how a user question becomes a cited answer, which
-components own each stage, and which technologies implement those roles in the
-MVP.
+RepoRationale is a modular monolith. It runs as one local application, while
+the interface, workflows, domain contracts, and external integrations remain
+separate and independently testable.
 
-RepoRationale runs as a **modular monolith**. It is one application, but its UI,
-application workflows, core logic, and external integrations remain separate
-and testable.
+## 1. Architecture overview
 
-## 1. Shape of the system
+The product has two primary lifecycles:
 
-RepoRationale has two separate lifecycles:
+1. The **indexing lifecycle** prepares a reusable searchable snapshot of one
+   repository revision.
+2. The **question-answering lifecycle** retrieves evidence from a ready
+   snapshot and produces a cited answer or an explicit abstention.
 
-1. The **indexing lifecycle** prepares a reusable, searchable snapshot of one
-   repository.
-2. The **question-answering lifecycle** uses a ready snapshot to retrieve
-   evidence and answer rationale questions.
-
-Preflight runs whenever a repository is selected and decides which path is
-available:
+A repository-readiness check connects them:
 
 ```mermaid
 flowchart LR
-    UI[User interface] --> Preflight{Preflight}
-    Preflight -->|Compatible snapshot found| Ready[Ready snapshot]
-    Preflight -->|New index needed| Index[Indexing lifecycle]
+    Reference[Repository reference] --> Check{Repository<br/>readiness check}
+    Check -->|Ready snapshot| Ready[Ready]
+    Check -->|Index needed| Required[Index required]
+    Check -->|Outside supported scope| Unsupported[Unsupported]
+    Required --> Index[Indexing lifecycle]
     Index --> Ready
-    Preflight -->|Unsupported| Reject[Explain rejection]
-    Ready --> Ask[Question-answering<br/>lifecycle]
+    Ready --> Ask[Question-answering lifecycle]
 ```
 
-**Preflight** is the decision gate before either snapshot reuse or indexing. It
-first checks for a completed local snapshot compatible with the current source,
-chunking, embedding, and index configuration. If none exists, it confirms
-through the repository platform API that the selected public repository exists
-and can be queried, then estimates the ingestion workload for its supported
-history.
+The check validates the repository reference through its source platform,
+resolves the current revision, inspects compatible local artifacts, and applies
+admission policy when new source collection is required. Admission uses
+inexpensive repository-size signals as workload proxies before indexing starts;
+hard limits protect the actual build. These checks are support decisions, not
+exact forecasts of duration, storage, or cost.
 
-The estimate concerns the volume of data that would need to be collected,
-chunked, embedded, and stored. It is compared with limits established by
-benchmarks; it is not a promise of an exact duration or monetary cost.
-
-Its outcomes are:
-
-- **Ready:** a compatible snapshot from an earlier successful indexing run is
-  available. The UI identifies that snapshot so the user can reuse it or
-  request a manual rebuild.
-- **Index required:** no compatible snapshot exists, but the repository can be
-  indexed within the measured MVP limits. Indexing starts only after user
-  confirmation.
-- **Unsupported:** the reference is not a supported public repository, or its
-  estimated ingestion workload exceeds the measured limits. The UI explains
-  the reason and stops before paid embedding work begins.
-
-Admission thresholds and runtime caps are centrally defined application policy
-shared by preflight, snapshot building, and the rebuild command. Admission uses
-cheap repository-size signals before collection; hard request and normalized-
-source caps protect the actual build before publication. Their measured values
-are implementation policy rather than architectural structure.
+Temporary authentication, rate-limit, transport, timeout, or malformed-response
+failures are a separate operational outcome. They are never reported as
+`unsupported`, because failure to inspect a repository now does not establish
+that the repository is outside the supported scope.
 
 ## 2. Indexing lifecycle
 
-When preflight returns `Index required` and the user confirms, indexing runs
-from repository collection through snapshot validation:
+After explicit user confirmation, indexing runs with phase-level progress:
 
 ```mermaid
 flowchart LR
-    Sources[Repository<br/>sources] --> Adapter[Source adapter]
+    Sources[Repository-native<br/>sources] --> Adapter[Source adapter]
     Adapter --> Normalized[Normalized<br/>sources]
-    Normalized --> Chunk[Source-aware<br/>chunking]
-    Chunk --> Embed[Create<br/>embeddings]
-    Embed --> Index[Build<br/>vector index]
-    Index --> Snapshot[(Validated repository<br/>snapshot)]
+    Normalized --> Chunk[Source-aware<br/>chunks]
+    Chunk --> Embed[Document<br/>embeddings]
+    Embed --> Vector[Vector index]
+    Vector --> Snapshot[(Validated ready<br/>repository snapshot)]
 ```
 
-- **Repository sources:** the complete supported set of repository-native
-  issues, completed pull requests and their conversation/review content, commit
-  messages, and Markdown documentation.
-- **Source adapter:** performs the platform-specific, paginated API calls and
-  converts every independently citable item into the shared source-document
-  form. After this stage, the rest of the system receives only normalized
-  sources and does not need to understand the platform's API format.
-- **Normalized sources:** are the adapter's output. They preserve stable
-  identity, familiar platform type, text, original link, timestamps, state,
-  and relationships.
-- **Source-aware chunking:** divides long normalized sources into smaller
-  searchable passages without losing their source identity or position.
-  Markdown follows document structure, while repository conversations retain
-  their natural source boundaries.
-- **Create embeddings:** converts every chunk into a numeric representation used
-  for semantic similarity search.
-- **Build vector index:** stores the searchable chunk vectors together with the
-  text and provenance required to return and cite the original evidence.
-- **Validated repository snapshot:** is created only after required stages and
-  counts have been verified. It contains the normalized corpus, derived chunks,
-  vector index, and compatibility metadata as one reusable local result.
+- **Repository-native sources:** the supported issues, completed changes and
+  their discussion or review content, commit messages, and repository
+  documentation.
+- **Source adapter:** performs the platform-specific paginated requests and
+  converts every independently citable item into the shared source contract.
+  Bounded concurrency may overlap independent requests, but cannot change
+  completeness, deterministic ordering, shared limits, or failure behaviour.
+- **Normalized sources:** preserve stable identity, platform-native type,
+  content, original URL, timestamps, state, and available relationships.
+- **Source-aware chunks:** divide long sources into searchable passages while
+  retaining the provenance required to cite the original item.
+- **Document embeddings:** convert chunks into vectors through an embedding
+  provider. Document requests may be batched and run with bounded concurrency;
+  results return in source order. Query embedding remains a separate operation.
+- **Vector index:** persists chunk vectors and the metadata required for
+  similarity retrieval.
 
-### Normalized source-document contract
+### Normalized source contract
 
-`SourceDocument` is the platform-independent boundary returned by a repository
-source adapter. It contains a platform-namespaced `source_id`, platform and
-repository identifiers, an extensible platform-native `source_type`, non-empty
-text, the original source URL, optional timezone-aware creation and update
-timestamps, and optional title, item number, parent identity, and JSON metadata.
+`SourceDocument` is the platform-independent boundary returned by a source
+adapter. It contains a platform-namespaced `source_id`, platform and repository
+identifiers, an extensible platform-native `source_type`, non-empty text, the
+original URL, optional timezone-aware timestamps, and optional title, item
+number, parent identity, and metadata.
 
-The model freezes its top-level fields, rejects unknown top-level fields,
-requires parent identities to use the same platform namespace, and prevents
-contradictory timestamp order. Provider SDK response objects never cross this
-boundary.
-
-The normalized source corpus is the canonical rebuild input; chunks, embeddings,
-and the vector index are derived data. Indexing runs synchronously with
-phase-level progress. Failed or interrupted builds are not queryable, while an
-earlier ready snapshot remains reusable.
+The contract is closed and immutable. External provider objects do not cross
+this boundary, and a normalized source cannot be silently extended after
+validation.
 
 ### Derived chunk contract
 
 `SourceChunk` is the provider-independent retrieval unit derived from one
 `SourceDocument`. Its stable ID combines the source ID with a zero-based
-position. Every chunk repeats the source provenance needed by later retrieval
-and citations, including platform, repository, source type, URL, timestamps,
-parent relationship, title, item number, and source metadata. Markdown chunks
-also retain their active heading hierarchy.
+position. It repeats the provenance required by retrieval and citation,
+including the original URL and relevant heading or discussion metadata.
 
-Markdown sources are split first by heading section and then by block boundary;
-other source types keep their citation-addressable document as the natural
-boundary and split long text at paragraph boundaries. An explicit character
-limit bounds every chunk, with deterministic whitespace-aware fallback for an
-oversized block. MVP indexing uses a product-wide maximum of 2,000 characters
-with no overlap. This remains application configuration rather than an
-end-user-selectable setting.
+Chunking respects source structure before applying a configured maximum size.
+Document headings and block boundaries are preserved where possible, while
+repository conversations retain their natural citation-addressable boundaries.
+Chunk size and overlap are application configuration, not end-user choices.
 
-Derived chunks are stored deterministically beneath the validated normalized
-snapshot as a separate `chunks/` artifact. Its manifest records the source and
-chunk schema versions, chunker algorithm version and size parameter, source and
-chunk digests, and chunk count. Publication validates the complete artifact
-before atomically replacing only that derived directory. The parent
-`manifest.json` and canonical `sources.jsonl` remain unchanged, and a complete
-chunk artifact still does not mean that a searchable vector index is ready.
+### Snapshot integrity and publication
 
-### Lexical retrieval baseline
+The normalized source corpus is the canonical rebuild input. Chunks,
+embeddings, and the vector index are derived artifacts. Their manifests record
+the schema, algorithm, count, and provider configuration needed for
+compatibility checks.
 
-The offline lexical baseline loads the same validated persisted chunks intended
-for vector retrieval and builds a reusable in-memory BM25 representation. Its
-small deterministic tokenizer case-folds Unicode letter and digit sequences,
-treats punctuation and underscores as separators, and applies no stemming,
-stop-word removal, metadata expansion, or query expansion. Results with no
-lexical overlap are omitted rather than returned with arbitrary zero scores.
+Every artifact is built and validated in a staged location before publication.
+A repository becomes ready only when its normalized corpus, chunks, and vector
+index are mutually compatible and complete. A failed or interrupted build is
+never queryable and never replaces a previous ready result. A compatible ready
+snapshot can reopen without recollecting sources or re-embedding documents;
+corruption fails explicitly instead of triggering hidden paid work.
 
-Both lexical and vector retrieval return the shared `RankedEvidence`
-contract: a stable evidence ID matching the nested chunk ID, a one-based rank,
-a finite raw score, and an extensible score-kind label. Raw scores retain their
-retriever-specific meaning and are not probabilities or directly comparable
-across retrieval methods. Equal BM25 scores are ordered by stable chunk ID, so
-repeated searches remain deterministic.
+### Retrieval contracts
 
-### Vector retrieval product path
+The product retrieval path embeds a query using query semantics and searches
+the active vector index. The vector store never creates embeddings itself, and
+provider-specific types remain within their adapters.
 
-The product retrieval path embeds each persisted chunk with Voyage 4 using
-document input semantics and stores the supplied vectors in a local persistent
-Chroma collection configured for cosine distance. Query text is embedded
-separately with query input semantics. Chroma never creates embeddings itself,
-and its SDK types remain inside the embedding and vector-storage adapters.
-
-The vector-index manifest anchors the collection to the exact normalized-source
-and chunk digests, schema and algorithm versions, chunk-size parameter,
-embedding model and dimension, Chroma version, distance metric, and record
-count. Reuse requires both compatible metadata and validation of the persisted
-collection. Corrupted artifacts fail explicitly rather than silently causing a
-paid rebuild; missing or genuinely incompatible artifacts may be rebuilt from
-the canonical chunks.
-
-Index construction writes to a staged directory, validates the reopened Chroma
-collection, and only then replaces the active vector artifact through the same
-recoverable publication protocol used by the other snapshot artifacts. Chroma
-records are inserted in batches no larger than the local client's reported
-limit. A failed rebuild therefore leaves the previous completed index reusable,
-and restarting the application can reopen a compatible index without embedding
-the repository again.
-
-The `search_history` application service accepts only non-blank query text and
+The `search_history` application service accepts non-blank query text and
 returns at most five `RankedEvidence` results. Each result is mapped by stable
-chunk ID back to the canonical persisted `SourceChunk`, rather than reconstructing
-provenance from Chroma metadata. Its raw score is cosine distance, where smaller
-values rank earlier; it is not a probability and is not numerically comparable
-with a BM25 score. Similarity thresholds and evidence-sufficiency decisions
-belong to the answering lifecycle rather than retrieval storage.
+chunk ID to the canonical persisted `SourceChunk`, rather than trusted from
+vector-store metadata. A result has a one-based rank, a finite raw score, and a
+score-kind label. Retrieval scores are not probabilities or model confidence
+values.
+
+An offline lexical baseline reads the same persisted chunks and returns the
+same `RankedEvidence` contract. It exists only for reproducible comparison and
+never participates in the product retrieval path. Scores retain
+retriever-specific meanings and are not directly comparable across methods.
 
 ## 3. Question-answering lifecycle
 
-Once a snapshot is ready, each question follows this workflow:
+Each question against a ready snapshot follows this bounded workflow:
 
 ```mermaid
 flowchart LR
-    Question[User question]
-    Context[Session conversation context<br/>optional, at most 3 prior turns]
-    Question --> Search[Exact-question semantic search]
-    Search --> Index[Search vector index]
-    Index --> Evidence[Return ranked evidence]
-    Evidence --> Agent[Answering agent]
-    Context --> Agent
-    Agent --> Assess{Evidence sufficient?}
-    Assess -->|No, attempts remain| Refine[refine_search tool]
-    Refine --> Index
-    Assess -->|Yes| Validate[Validate citations]
+    Question[User question] --> First[Use exact question]
+    First --> Search[search_history service]
+    Search --> Evidence[Ranked evidence]
+    Context[Conversation context] --> Agent[Answering agent]
+    Evidence --> Agent
+    Agent --> Action{Next typed action}
+    Action -->|Evidence gap and<br/>attempts remain| Refine[refine_search]
+    Refine --> Search
+    Action -->|Grounded answer| Validate[Validate citations]
     Validate --> Answer[Cited answer]
-    Assess -->|No, final attempt| Abstain[Insufficient evidence]
+    Action -->|Evidence insufficient| Abstain[Explicit abstention]
 ```
 
-- **User question:** the natural-language rationale question entered in the UI.
-- **Session conversation context:** an optional, provider-neutral list of at
-  most the three most recent completed turns of the current session, oldest
-  to newest, each carrying only a prior question and its resulting answer or
-  insufficient-evidence explanation. It reaches the answering agent only,
-  never the exact-question search, and never carries citation excerpts, raw
-  retrieved evidence, execution traces, provider messages, token usage, or
-  SDK objects. It is not repository evidence.
-- **Exact-question semantic search:** the application sends the user's unchanged
-  question through Voyage and the active Chroma index before invoking the
-  answering model. Session conversation context, when supplied, never
-  changes this query.
-- **Answering agent:** evaluates whether the returned evidence answers the
-  actual question. It never explores the repository directly and formulates
-  a new query only when the first results leave a specific information gap;
-  when conversation context is present, it may use that context only to
-  resolve references, ellipsis, or topic in the current question, and a
-  context-resolved refinement is still bounded by the same three-search
-  limit. A prior generated answer is never treated as evidence for the
-  current one.
-- **`refine_search` tool:** the agent's only tool able to request another search.
-  It accepts a text query and a required missing-information explanation, and
-  exposes no source, author, date, state, or repository-item filters.
-- **Search vector index:** performs semantic similarity search for the current
-  query.
-- **Return ranked evidence:** supplies the most relevant chunks with source
-  identity, direct link, and ranking information.
-- **Evidence sufficient?:** the agent records a `sufficient` or `insufficient`
-  assessment after each search. If information is missing and attempts remain,
-  it may refine the query or follow a referenced repository item. It can search
-  at most three times.
-- **Validate citations:** deterministically rejects citation IDs that were not
-  returned during the current run. It does not decide whether the explanation
-  itself is persuasive.
-- **Cited answer:** an `answered` result containing answer text and numbered
-  citations tied to retrieved evidence.
-- **Insufficient evidence:** an explicit abstention after the final unsuccessful
-  search, rather than an unsupported guess.
+- **Use exact question:** before invoking the answering model, the
+  application calls `search_history` with the user's unchanged question. A
+  later `refine_search` action calls that same service with a model-proposed
+  query; `search_history` itself is not exposed as a model tool.
+- **Conversation context:** the interface may supply up to three recent
+  completed turns to resolve references, ellipsis, or topic. Prior answers are
+  explicitly non-evidentiary and never alter the mandatory first query.
+- **Answering agent:** after reviewing ranked evidence, the model must return
+  one schema-validated action: `refine_search`, `provide_answer`, or
+  `report_insufficient_evidence`. It receives no repository, filesystem,
+  storage, code-modification, or arbitrary external tool.
+- **`refine_search`:** the model supplies a standalone text query and a
+  required explanation of the missing information. It may use an identifier
+  found in evidence, but it cannot open a repository item directly or apply
+  structured source, author, date, state, or item filters.
+- **Validate citations:** a cited evidence ID is valid only if it was returned
+  during the current run. Titles, URLs, and excerpts are resolved by the
+  application from persisted evidence rather than trusted from model text.
 
-Retrieval rank orders passages by relevance; it is not an AI confidence score.
-The agent continues or stops according to whether the retrieved text supports
-the requested rationale.
+Each run may perform at most three searches, including the application-owned
+first search. The agent may stop early when evidence is sufficient; when the
+budget cannot resolve the evidence gap, it must abstain.
 
-The application owns a provider-independent answering contract and a plain
-Python workflow with a fixed limit of three searches. It performs the first
-search itself, then the answering provider returns only one typed action at a
-time: request a refinement, provide a final answer with selected evidence IDs,
-or report insufficient evidence. Every completed search receives an explicit
-sufficiency assessment, and a fourth search request is rejected without being
-executed. The workflow also accepts an optional session conversation context
-of at most three completed prior turns; an omitted or empty context preserves
-single-question behaviour exactly, and citation validation is unaffected — a
-citation is accepted only when its evidence ID was returned by
-`search_history`/`refine_search` during the current run, so an ID that
-appeared only in a prior turn's answer remains rejected.
+Each question creates a fresh answering-adapter conversation. Context is reset
+when the user session, repository, snapshot, or index changes, and it is never
+persisted as part of the repository snapshot. Every answer, including a
+follow-up, must therefore be supported by evidence retrieved during its own
+run.
 
-The Anthropic adapter owns the Claude message history and translates the
-standard tool-use and tool-result exchange into those application actions. It
-accepts a maintainer-supplied model identifier and exposes a fixed set of
-three tools: `refine_search` for an optional later query, with a required
-missing-information explanation, and two non-retrieval tools,
-`provide_answer` and `report_insufficient_evidence`, through which the model
-must express its final answer or abstention as a schema-validated tool call
-rather than free-form text. Every model turn forces exactly one of the tools
-currently offered; extended thinking is
-explicitly disabled so no supported model substitutes a `thinking` block for
-that required call. Provider response objects and citation metadata never
-cross the adapter boundary.
+The workflow returns an in-memory trace containing searches, sufficiency
+assessments, latency, usage, and the final outcome. The evaluation runner uses
+the same retrieval and answering services as the application instead of a
+second evaluation-only implementation.
 
-Each answering run constructs a fresh Anthropic adapter instance; its
-internal Claude message history is never reused across separate questions,
-so a later question can only be informed by an earlier one through the
-explicit conversation-context argument, never through provider-side memory.
-When conversation context is supplied, the adapter serializes it into a
-distinctly labelled, explicitly non-evidentiary section of the first user
-message, ahead of the current question and that turn's initial search
-evidence, and the system prompt states plainly that prior questions and
-generated answers may be used only to resolve references and topic, never
-cited or restated as support for the current answer. Selecting which
-completed turns to supply as context, and resetting that context on a
-browser refresh, a new session, an application restart, or a repository or
-snapshot change, belongs entirely to the Streamlit caller; the answering
-workflow and Anthropic adapter remain session- and repository-agnostic and
-persist no conversation state themselves.
+## 4. Component boundaries
 
-For an answered result, the workflow resolves numbered citations from the
-accumulated evidence rather than trusting model-supplied titles, links, or
-excerpts. It rejects unseen evidence IDs and requires the numeric markers in
-the answer text to match the resolved citation numbers. Each successful run
-also returns a compact in-memory trace containing search queries, returned
-evidence IDs, sufficiency decisions, missing-information notes, call latency,
-model usage, and the model and agent versions needed by later evaluation. Run
-traces are not persisted at this stage.
+The modular monolith follows this dependency shape:
 
-### Evaluation artifact lifecycle
+```mermaid
+flowchart LR
+    UI[User interface] --> App[Application workflows]
+    UI --> Composition[Composition root]
+    Composition --> Adapters[External and persistence adapters]
+    App --> Domain[Domain contracts]
+    App --> Adapters
+    Adapters --> Domain
+```
 
-The offline evaluation foundation keeps semantic orchestration in the
-application layer. It validates the versioned question set and cross-artifact
-identity, computes retrieval and answering aggregates from raw case results,
-renders the Markdown report, and rechecks both derived artifacts when a run is
-loaded. The filesystem adapter only parses, serializes, and atomically
-publishes the seven run files; it does not calculate metrics or depend on
-application modules.
+- **User interface:** owns presentation state, confirmation, progress,
+  conversation display, and translation of application outcomes into user
+  states. It does not implement ingestion, retrieval, or answering logic.
+- **Composition root:** reads local configuration and constructs the concrete
+  implementations required by the interface and workflows.
+- **Application workflows:** coordinate repository inspection, admission,
+  indexing, readiness, retrieval, answering, and evaluation.
+- **Domain contracts:** define provider-neutral identities, sources, chunks,
+  evidence, snapshots, answering actions, outcomes, and traces.
+- **Adapters:** isolate source-platform APIs, embedding and answering providers,
+  vector storage, and filesystem persistence. External SDK types do not enter
+  domain contracts.
 
-A completed local run contains a manifest, indexing measurements, separate
-raw query-embedding usage, retrieval and answer JSON Lines records, a computed
-summary, and a computed Markdown report. Known measurement gaps that cannot be
-attached to an identifiable skipped item are recorded separately from skipped
-items. The manifest may also record the provider, model, verification date,
-and per-million-token input/output rates used for cost estimates; providers
-without a separately billable output unit leave that rate absent. Staged
-publication and reload validation prevent a partial write from
-appearing complete. Semantic loading requires the corresponding reviewed
-question set so split leakage, understated applicable query-request counts,
-and tampered or mismatched summaries and reports are rejected.
+The first release implements one adapter at each external boundary, but the
+lifecycles depend on the roles and contracts above rather than on a specific
+vendor. Replacing a provider requires a compatible adapter, not a rewrite of
+the domain model or either primary lifecycle.
 
-A thin application runner converts outputs from the existing BM25,
-Voyage/Chroma, and bounded-answering services into those raw per-case records.
-It constructs no provider client and reads no credential; paid retrieval and
-answering paths require an explicit caller confirmation, execute cases
-sequentially, and perform no retry. Every run manifest selects exactly one
-development or held-out split; aggregation, publication, loading, and the raw
-runner reject results that cross that boundary so the held-out set is not
-exposed during parameter tuning.
+## 5. First-release implementation
 
-## 4. Architecture roles and MVP technologies
+This first release maps the stable architecture to these concrete
+technologies:
 
-The lifecycles above define the technology-independent architecture. The MVP
-implements each role with one concrete choice, including the exact Claude
-model, selected through a bounded development comparison:
+| Role | First-release implementation |
+| --- | --- |
+| Runtime | [Python](https://www.python.org/) modular monolith |
+| User interface | [Streamlit](https://docs.streamlit.io/) |
+| Repository source | Public repositories through the [GitHub REST API](https://docs.github.com/en/rest) |
+| Embedding provider | [Voyage 4](https://docs.voyageai.com/docs/embeddings) |
+| Vector storage and retrieval | [Chroma](https://docs.trychroma.com/) |
+| Answering provider | [Anthropic Claude](https://platform.claude.com/docs/en/models/overview) through the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python), using `claude-opus-5` |
+| Snapshot persistence | Local manifests, [JSON Lines](https://jsonlines.org/) source and chunk artifacts, and Chroma files |
+| Offline lexical baseline | [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) |
 
-| Architecture role | MVP technology | Responsibility | Does not |
-| --- | --- | --- | --- |
-| Application runtime | [Python](https://www.python.org/) modular monolith | Runs the modules in one local process while preserving their boundaries | Create separate HTTP services or mix all responsibilities into the UI |
-| User interface | [Streamlit](https://docs.streamlit.io/) | Selects a repository, presents preflight and indexing state, accepts questions, and renders results | Call repository, embedding, vector-store, or model APIs directly |
-| Repository source adapter | [GitHub REST API](https://docs.github.com/en/rest) | Collects the complete supported GitHub corpus through explicit pagination and normalizes it | Expose raw GitHub responses to the core, use GraphQL, or support another platform in the MVP |
-| Embedding provider | [Voyage 4](https://docs.voyageai.com/docs/embeddings) | Creates embeddings for indexed chunks and incoming search queries | Search the index, assess evidence, or generate answers |
-| Vector storage and retrieval | [Chroma](https://docs.trychroma.com/) | Persists chunk vectors and returns ranked evidence for a query | Create embeddings, reason about evidence, or generate answers |
-| Answering-model provider | [Anthropic Claude](https://platform.claude.com/docs/en/models/overview) through the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python); MVP model is `claude-opus-5`, selected by a bounded development comparison | Assesses evidence sufficiency, optionally requests `refine_search`, and generates the cited answer | Rewrite the initial user query, access repository or storage systems directly, or cite evidence that retrieval did not return |
-| Snapshot persistence | Local manifest and [JSON Lines](https://jsonlines.org/) source/chunk files, plus the Chroma index | Makes completed repository indexes reusable and rebuildable while keeping generated data local | Treat incomplete data as ready or store user credentials in the snapshot |
-| Offline retrieval baseline | [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) over the same chunks | Compares lexical retrieval with the product's semantic retrieval during evaluation | Participate in `search_history`, prefilter vector results, or create a second product retrieval path |
-
-The UI calls application services rather than infrastructure providers. Small
-adapters isolate the repository platform, embedding provider, answering-model
-provider, and storage implementation, so each can be replaced later without
-rewriting both lifecycles. The MVP implements only one option at each boundary
-and searches one repository snapshot at a time.
-
-Chunk size, retrieval result count, request concurrency, batching, retries,
-repository admission limits, and the exact Claude model are selected from
-measurements rather than exposed as user choices. The Claude model identifier
-stays a configuration argument to the answering adapter, not a value the UI
-lets a user choose; the provider-neutral application and domain contracts
-described in section 3 do not depend on which Claude model is configured, so
-a later Claude model can replace `claude-opus-5` without changing retrieval
-or domain logic.
-
-Current delivery state is maintained in [plan.md](plan.md).
+The first-release configuration bounds chunk size and overlap, retrieval result
+count, search attempts, conversation context, request concurrency, batching,
+retry policy, and repository admission. These values are internal policy, not
+UI choices. Their rationale is recorded in the
+[decision log](decisions.md), and the measurements supporting them are in the
+[evaluation](evaluation.md).

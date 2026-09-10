@@ -1,900 +1,499 @@
-# RepoRationale — Evaluation
+# RepoRationale: Evaluation
 
-**Status:** Approved for MVP  
-**Last updated:** 2026-09-08
+RepoRationale was evaluated as an evidence workflow: can it recover relevant
+repository history, answer from that history with traceable citations, and say
+when the available evidence is insufficient?
 
-This document explains how RepoRationale will be evaluated: what the system
-must prove, how evidence and answers will be reviewed, which measurements will
-be recorded, and how results will be reproduced. It combines the evaluation
-method with the concise measured findings available at each completed stage.
+The evaluation was not one final benchmark performed after implementation. It
+developed with the product. Smaller repositories were used to test ingestion,
+chunking, retrieval, and model behaviour; the result of each stage fixed a
+choice for the next one. Only then was a held-out question set run against a
+larger external repository.
 
-## 1. What the evaluation must prove
+This document follows that sequence. Each stage states its goal, why the
+measurement was needed, what was observed, and which decision followed. Product
+scope belongs in the [project definition](project.md), while component
+responsibilities and runtime contracts belong in the
+[architecture](architecture.md). They are not repeated here.
 
-Evaluation must establish that RepoRationale can:
-
-1. build a complete, reusable index for a repository within the MVP limits;
-2. retrieve evidence that a reviewer has already identified as relevant;
-3. answer from that evidence without inventing undocumented rationale;
-4. abstain when the available history is insufficient;
-5. improve difficult searches through bounded query refinement; and
-6. do this with visible latency, API usage, cost, and failure behaviour.
-
-These concerns are measured separately so that one stage cannot conceal a
-failure in another:
+Three kinds of verification were used. Automated software tests checked that
+the implementation and evaluation machinery behaved consistently. Recorded
+experiments measured alternatives such as chunk sizes, retrievers, models, and
+concurrency settings. Manual review established whether historical evidence
+and generated claims were actually relevant. The evaluation therefore did not
+treat every step as the same kind of “test.”
 
 ```mermaid
-flowchart LR
-    Corpus[Validate corpus] --> Questions[Review questions<br/>and evidence]
-    Questions --> Retrieval[Measure retrieval]
-    Retrieval --> Answers[Review answers]
-    Answers --> Report[Report results<br/>and failures]
+flowchart TD
+    S1[1. Evaluation corpus selection]
+    S2[2. GitHub corpus collection and admission limits]
+    S3[3. Reviewed question sets and expected evidence]
+    S4[4. Chunk-size calibration]
+    S5[5. Retrieval-method selection]
+    S6[6. Answer-model and workflow selection]
+    S7[7. Held-out evaluation with a fixed configuration]
+    S8[8. Operational performance and optimization]
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8
 ```
 
-For example, a fluent answer does not count as successful when retrieval did
-not return evidence that supports it.
+## 1. Evaluation corpus selection
 
-## 2. Corpus and question set
+**Goal.** Find a main external repository with a corpus large enough and varied
+enough to represent the setting RepoRationale is intended to address, while
+using smaller repositories for earlier development decisions. “Large enough”
+meant thousands of historical items across a long-lived project, sufficient to
+exercise pagination, request limits, indexing cost, and evidence ranking.
+“Varied enough” meant that rationale appeared across different source types,
+including issues, pull requests, comments, commits, and documentation, and
+allowed evaluation of direct questions, semantic rewordings, and
+unsupported-premise controls.
 
-### Selected corpus
+**Why it was needed.** RepoRationale is intended to be most useful when a
+repository has accumulated enough history that repeatedly locating past
+decisions becomes costly and the relevant explanation may be old or distributed
+across several source types. For a small repository with limited history,
+direct Git inspection or a general coding agent may be simpler and equally
+effective. A final evaluation based only on a small or familiar repository
+would therefore avoid the setting in which a reusable evidence index is meant
+to provide value. Smaller familiar repositories were still useful earlier for
+checking known history and making controlled development decisions.
 
-The main external evaluation corpus is
-[`google/gson`](https://github.com/google/gson). It was selected after
-read-only measurements across recognizable repositories in several languages.
-A suitable repository must:
+**Repositories used.** [Gson](https://github.com/google/gson) is Google's
+open-source Java library for converting Java objects to and from JSON. It became
+the main external corpus because it has a large, varied public history and
+explicit rationale sources such as `GsonDesignDocument.md`. It was not the only
+repository evaluated.
 
-- fit a measured, reviewed complete-corpus envelope;
-- contain explicit rationale in the source types supported by the MVP;
-- contain enough source variety to exercise normalization and citations;
-- allow a reviewer to establish expected evidence without guessing intent; and
-- be understandable and recognizable in a portfolio demonstration.
+| Repository | Role | What it helped measure |
+| --- | --- | --- |
+| [Cross-PR Integration Risk Analyzer](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer) | Familiar reference corpus | Early checks against a user-owned repository whose history was already known; it contains no pull requests and was not a final evaluation candidate |
+| [ItsDangerous](https://github.com/pallets/itsdangerous) | Development corpus: 1,659 sources | Ingestion requests, chunking, retrieval, refinement, and model comparison |
+| [MarkupSafe](https://github.com/pallets/markupsafe) | Development corpus: 2,148 sources | Collection concurrency, difficult retrieval, abstention, and model comparison |
+| [Gson](https://github.com/google/gson) | Main external corpus: 13,893 sources in the held-out run | Limits, final questions, answer quality, latency, and cost |
+| [ripgrep](https://github.com/BurntSushi/ripgrep) and [Black](https://github.com/psf/black) | Size probes: 2,967 and 5,238 roots | Showed that the original 700-root limit was too restrictive |
+| [VS Code](https://github.com/microsoft/vscode) | Oversized candidate | Tested preflight rejection, not answer quality |
 
-Gson is recognizable, has a varied supported history, and contains explicit
-repository-native Markdown rationale, including `GsonDesignDocument.md`. Its
-measured workload exceeded the original conservative admission envelope. After
-the complete evaluation build succeeded, those experimental ceilings were
-accepted as the shared measured MVP limits. `serilog/serilog` remains the
-documented fallback corpus.
+**Results.** The familiar repository supported early correctness checks;
+ItsDangerous and MarkupSafe supplied manageable development corpora; ripgrep
+and Black showed that the first size limit excluded useful repositories; Gson
+combined scale, source variety, and manually reviewable rationale; and VS Code
+provided a repository clearly beyond the intended release envelope.
 
-The other repositories retain only these supporting roles:
+**Decision.** Use several repositories for development decisions and reserve
+Gson for the main external held-out evaluation. Repository size was not treated
+as a proxy for evaluation quality: the choice also required varied historical
+sources and questions whose expected evidence could be reviewed manually.
 
-| Candidate | Evaluation role |
-| --- | --- |
-| [`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer) | Author-owned companion repository for controlled dogfooding and development, with familiar Markdown decisions and commit history |
-| [`serilog/serilog`](https://github.com/serilog/serilog) | Fallback main corpus if Gson proves impractical |
-| [`microsoft/vscode`](https://github.com/microsoft/vscode) | Deliberately oversized preflight-rejection case |
+## 2. GitHub corpus collection and admission limits
 
-[`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer)
-is an author-owned companion repository created by the same developer as
-RepoRationale. It can support early development, dogfooding, and a small
-controlled evaluation because its rationale is familiar and directly
-reviewable. It cannot exercise the complete pull-request and issue corpus
-expected from the main external evaluation repository, and it is not
-independent evidence of performance on an unfamiliar repository. The oversized
-case evaluates admission and rejection behaviour; it is not expected to become
-an answer-quality corpus. Repositories are indexed and evaluated separately.
+**Goal.** Determine how to collect the selected repositories completely within
+acceptable GitHub request and wall-clock costs, and establish when a repository
+must be rejected before indexing begins.
 
-### Establishing reviewed questions
+**Why it was needed.** Later retrieval measurements are meaningful only if the
+underlying corpus is complete. The initial implementation made too many
+per-item requests, while the initial 700-root ceiling rejected repositories
+that were still feasible to process. Collection strategy and admission limits
+therefore needed their own measurements, separate from corpus selection.
 
-Each evaluation case is recorded before the system is run:
+**Results.** The development runs measured endpoint choice, worker count, and
+the larger Gson envelope.
 
-| Field | Purpose |
-| --- | --- |
-| Question | Natural-language input submitted to RepoRationale |
-| Category | Capability or failure mode being exercised |
-| Expected outcome | `answered` or `insufficient_evidence` |
-| Expected sources | Stable source IDs and URLs that support an answer, when they exist |
-| Review note | Why the evidence is sufficient, or how its absence was checked |
-
-The question set will cover:
-
-- exact identifiers, options, or component names;
-- semantic “why” questions phrased differently from their evidence;
-- answers that require multiple or superseding sources;
-- ambiguous questions that benefit from a narrower follow-up search;
-- answerable questions whose first retrieval is intentionally weak; and
-- unanswerable questions with no verified documented rationale.
-
-Keep the MVP evaluation lean: target 12 reviewed questions, with four
-development cases and eight held-out cases. The exact composition is finalized
-after corpus validation so every selected case has trustworthy ground truth.
-A human reviewer must confirm that ground truth from the original repository
-history; system-generated answers cannot establish their own expected
-evidence.
-
-The Gson question-set version 1 now contains that 4+8 split: three answerable
-and one insufficient-evidence development case, plus six answerable and two
-insufficient-evidence held-out cases. Codex reviewed every expected source
-against the pinned normalized corpus. One draft case was corrected during that
-review: it now asks why a Date-format change was proposed, because its source
-explicitly says the proposal had not been accepted at the pinned revision. The
-notes for two negative controls were also narrowed after independent corpus
-search found related Gradle and asynchronous-history records that did not
-support the controls' more specific premises. The held-out questions have not
-been submitted to any retriever or answering model.
-
-## 3. Retrieval evaluation
-
-Retrieval is measured independently of answer generation. Vector retrieval and
-the offline BM25 baseline run over the same persisted chunks, reviewed
-questions, and result limit.
-
-For each answerable question, the evaluation records a small set of metrics:
-
-- **Hit@5**, the primary retrieval metric: whether at least one expected source
-  is represented in the first five retrieved chunks;
-- **MRR@5**, calculated automatically as a secondary metric: how early the
-  first chunk from an expected source appears within the first five results;
-- **source Recall@5**, only for questions that require multiple expected
-  sources: the proportion of those sources represented in the first five
-  chunks;
-- retrieval latency; and
-- failures grouped by question category and source type.
-
-Relevance is judged at source level: a chunk counts as relevant when its source
-ID is part of the reviewed expected evidence. Multiple chunks from the same
-source must not inflate source-level recall.
-
-The BM25 comparison diagnoses where semantic retrieval adds value and where
-exact lexical matching is stronger. It does not create a second product
-retrieval path or change the MVP architecture.
-
-The retrieval-foundation tests use a tiny persisted corpus and hand-authored
-vectors to verify the vector pipeline deterministically: expected evidence is
-ranked first, provenance survives the Chroma round trip, the result count is
-bounded, and a compatible index is reopened without repository re-embedding.
-These are contract and persistence checks, not evidence that Voyage provides
-good semantic retrieval on real repository history. That claim requires the
-reviewed corpus, real Voyage embeddings, and retrieval metrics defined above.
-
-### Gson development BM25 pilot
-
-The offline BM25 baseline ran only the three answerable development questions
-at the fixed top-five limit. It retrieved the direct design-document rationale
-at rank one and missed both the semantic reword and the issue-comment case
-chosen to exercise query refinement. The insufficient-evidence development
-control was not retrieval-scored, and no held-out question was queried. This
-1/3 Hit@5 result is a development diagnostic, not the final lexical score; it
-establishes concrete misses for the Voyage comparison without changing their
-ground truth after observation.
-
-### Gson development Voyage/Chroma comparison
-
-The pinned Gson snapshot produced 17,479 chunks at the selected 2,000-character
-maximum. Building and validating its reusable Voyage 4/Chroma index required
-137 document-embedding requests, accepted 2,965,021 tokens, and took about
-248.3 seconds including index publication and validation. Reopening the
-completed index took about 2.6 seconds and made no document-embedding request.
-The vector index occupied 201,309,469 bytes; the source, chunk, and vector
-artifacts occupied 243,836,197 bytes together.
-
-At a recorded standard list price of `$0.06` per million tokens on 2026-09-07,
-the document embeddings had a `$0.17790126` list-price equivalent. The three
-first-search development queries and one separately labelled refinement
-diagnostic used four query requests and 49 tokens, adding `$0.00000294`; the
-combined Voyage list-price equivalent was `$0.17790420`. This is a cost
-estimate, not a claim about whether the provider charged the account after any
-free allowance.
-
-The three answerable development cases were run once through each persisted
-retrieval path at the fixed top-five limit. The insufficient-evidence control
-was retained in the split's four-case count but was not retrieval-scored.
-
-| Retriever | Hit@5 | MRR@5 | Mean latency |
-| --- | ---: | ---: | ---: |
-| BM25 | 1/3 | 0.333 | 0.070 s |
-| Voyage/Chroma | 2/3 | 0.444 | 0.440 s |
-
-Voyage preserved the design-document hit at rank one and recovered the
-issue-comment rationale at rank three, which BM25 missed. Both retrievers
-missed the semantic-reword case. The fixed refinement diagnostic did not bring
-that case's predeclared exact source into the top five, so it remains a miss
-rather than being re-labelled after observation. No held-out question and no
-answering model was called in this run.
-
-The run is scoped explicitly to the development split and reloads through the
-semantic artifact validator with four split cases, six retrieval records, and
-zero answer records. Its indexing record also discloses that blank-message
-commits were excluded as non-rationale content but that their exact count and
-identities cannot be reconstructed from the completed normalized snapshot.
-This is a measurement limitation, not an assertion that no item was skipped.
-
-### Development chunk-size calibration
-
-Chunk size was calibrated offline against completed normalized
-snapshots of [`pallets/itsdangerous`](https://github.com/pallets/itsdangerous)
-at commit `672971d66a2ef9f85151e53283113f33d642dabd` and
-[`pallets/markupsafe`](https://github.com/pallets/markupsafe) at commit
-`b2e4d9c7687be25695fffbe93a37622302b24fb1`. The snapshots contained 1,659 and
-2,148 independently citation-addressable sources respectively. No GitHub,
-embedding, vector-store, or answering-model API was called.
-
-The calibration had two deliberately separate stages:
-
-1. The existing deterministic chunker was run in memory at 750, 1,000, 1,500,
-   and 2,000 characters. This stage measured fragmentation and output volume;
-   it did not measure retrieval quality. As an exploratory boundary diagnostic,
-   up to 200 and 320 approximately 500-character windows around causal terms
-   such as “because”, “reason”, and “instead” were checked for containment in a
-   single chunk. These keyword-selected windows were not reviewed ground truth
-   and included false positives such as logs or dependency text, so their
-   percentages were used only to identify fragmentation risk. The
-   750-character candidate was removed from the shortlist because it generated
-   the most fragments and had the lowest window containment in both corpora.
-2. Six real rationale cases, three per repository, were reviewed manually.
-   Each case had a natural-language question, one known supporting source ID,
-   and a specific passage that made the source sufficient. The same source
-   documents were chunked at 1,000, 1,500, and 2,000 characters, indexed by the
-   project's standard offline BM25 implementation, and searched with a fixed
-   top-five limit. Hit@5 and MRR@5 used the known source ID; passage containment
-   checked whether the complete reviewed passage remained in a single chunk.
-
-The first-stage output counts were:
-
-| Maximum characters | ItsDangerous chunks | MarkupSafe chunks | Combined |
-| ---: | ---: | ---: | ---: |
-| 750 | 3,498 | 5,081 | 8,579 |
-| 1,000 | 3,082 | 4,421 | 7,503 |
-| 1,500 | 2,636 | 3,679 | 6,315 |
-| 2,000 | 2,346 | 3,230 | 5,576 |
-
-The exploratory window-containment diagnostic was:
-
-| Maximum characters | ItsDangerous windows | MarkupSafe windows |
-| ---: | ---: | ---: |
-| 750 | 60.0% | 57.8% |
-| 1,000 | 75.5% | 72.2% |
-| 1,500 | 84.5% | 79.1% |
-| 2,000 | 91.0% | 90.0% |
-
-These values mean only that a selected text window did or did not cross a
-chunk boundary. They are not retrieval success rates and were not treated as
-evidence that a chunk contained a correct answer.
-
-The reviewed retrieval results were:
-
-| Maximum characters | Hit@5 | MRR@5 | Passages kept in one chunk |
-| ---: | ---: | ---: | ---: |
-| 1,000 | 5/6 | 0.625 | 6/6 |
-| 1,500 | 5/6 | 0.625 | 5/6 |
-| 2,000 | 5/6 | 0.625 | 6/6 |
-
-The same semantic-wording case failed at every size: BM25 returned related
-records from the correct issue in the top five, but the exact decision-bearing
-comment did not appear in the top 50 because the question and comment shared
-too little vocabulary. This is a lexical-baseline limitation to test explicitly
-with Voyage retrieval, not evidence for or against a chunk size.
-
-The 2,000-character maximum was selected for MVP development. It tied the
-1,000-character candidate on every reviewed retrieval and containment measure
-while producing 1,927 fewer chunks, a 25.7% reduction. It also avoided the
-1,500-character candidate's observed boundary failure, where a
-1,502-character source became a 1,495-character chunk plus a six-character
-remainder and the reviewed supporting passage crossed that boundary. Fewer
-chunks also mean fewer embeddings and less opportunity for multiple fragments
-of one source to occupy the fixed result set.
-
-This was a small parameter-selection pilot, not the final held-out evaluation.
-It did not measure Voyage retrieval, generated answers, citations, latency, or
-API cost, and it does not support a general claim that 2,000 characters is
-optimal for other repositories. Those questions remain part of the later
-reviewed evaluation.
-
-### Development Voyage/Chroma retrieval pilot
-
-The selected 2,000-character artifacts were embedded through
-the standard Voyage endpoint with `model="voyage-4"`, document input semantics,
-no truncation, and the model's default 1,024 dimensions. The returned vectors
-were stored in separate local Chroma indexes configured for cosine distance.
-Each completed index passed full manifest, digest, record-count, dimension, and
-persisted-collection validation, then reopened without another document
-embedding call.
-
-| Repository | Chunks/vectors | Document tokens | Build and validation |
-| --- | ---: | ---: | ---: |
-| ItsDangerous | 2,346 | 439,936 | 54.9 s |
-| MarkupSafe | 3,230 | 698,938 | 75.1 s |
-| **Combined** | **5,576** | **1,138,874** | **130.0 s** |
-
-An initial attempt under Voyage's reduced no-payment-method limits failed with
-a rate-limit response before publication. The atomic workflow left no vector
-index or staging directory. After standard account limits were enabled, both
-builds completed. The successful document run's list-price equivalent at
-`$0.06` per million tokens was approximately `$0.068`; actual cost was `$0`
-under the account's free token allowance. Tokens accepted during the failed
-attempt were not returned by the interrupted adapter call and are therefore not
-included in the successful-run count.
-
-The same six pre-reviewed questions and exact expected source IDs used for the
-BM25 chunk-size pilot were then run against both persisted retrieval paths with
-a fixed top-five limit:
-
-| Development case | Voyage rank | BM25 rank |
+| Measurement | Earlier result | Improved result |
 | --- | ---: | ---: |
-| Remove the default SHA-512 fallback signer | — | 4 |
-| Change the timestamp epoch from 2011 to 1970 | 1 | 1 |
-| Aware-datetime compatibility risk | 2 | 1 |
-| Remove the generic string-method wrapper | 4 | 1 |
-| Reject an environment-variable speedup control | — | — |
-| Do not publish wheels without speedups | — | 2 |
-| **Hit@5** | **3/6** | **5/6** |
-| **MRR@5** | **0.292** | **0.625** |
-
-Voyage used 85 query tokens across the six calls. Mean end-to-end vector query
-latency, including the remote query embedding and local Chroma search, was
-343.2 ms. Loading the completed indexes made zero document-embedding calls.
-
-Manual review of the misses preserved the predeclared exact-source metric
-rather than changing ground truth after seeing results:
-
-- for the fallback-signer question, Voyage returned the implementing pull
-  request and commits, which identify what changed and link the issue but do
-  not themselves document why it changed; the strict miss therefore remains;
-- for the environment-variable question, Voyage returned generally related
-  speedup discussions rather than the final decision-bearing comment; this is
-  a substantive miss; and
-- for the wheels question, Voyage returned a different comment that does
-  support a rationale for requiring speedups. This exposes an incomplete
-  expected-source set, but the original metric remains unchanged. Future
-  reviewed question data must record every independently acceptable source
-  before execution.
-
-Two development-only query refinements then tested whether a second retrieval
-could recover the two substantive misses. A refinement following the pull
-request's reference to issue 155 retrieved the fallback-signer rationale at
-rank 5. A terminology-focused refinement for the environment-variable decision
-retrieved the correct issue description at rank 2 but still did not retrieve
-the final decision comment. The two refinements used 38 query tokens and made
-no document-embedding calls.
-
-This small pilot shows that the persisted vector path operates correctly and
-that a bounded second retrieval can recover useful missing evidence in at least
-one real case. It does not show that Voyage outperforms the lexical baseline;
-on this narrow exact-source set, BM25 was stronger. The cases were selected for
-chunk calibration rather than as a representative held-out comparison, and no
-generated answer, citation, abstention, or Claude model was evaluated.
-
-## 4. Answer evaluation
-
-Answer evaluation checks whether the agent chose the correct outcome and used
-its bounded retrieval loop effectively.
-
-### Development Claude-model comparison protocol
-
-Before any live answer-generation call, the bounded model-selection comparison
-is fixed as follows. It is a development experiment for selecting the MVP
-answering model, not the final held-out evaluation. All models use the same
-persisted Voyage 4 indexes, 2,000-character chunks, top-five retrieval limit,
-answering workflow and prompt version, and three-search maximum.
-
-| Case | Repository | Fixed question | Reviewed expectation |
-| --- | --- | --- | --- |
-| Direct retrieval | ItsDangerous | Why was the timestamp epoch changed from 2011 to 1970? | `answered`; the documented reason is compatibility with systems whose clocks can be earlier than 2011, supported by [the maintainer's historical explanation](https://github.com/pallets/itsdangerous/issues/204#issuecomment-770040669). |
-| Recoverable miss | ItsDangerous | Why was the default SHA-512 fallback signer removed? | `answered`; if the first result set contains only the implementing pull request or commits, a useful refinement should recover [the rationale in issue 155](https://github.com/pallets/itsdangerous/issues/155). |
-| Difficult miss | MarkupSafe | Why did MarkupSafe reject adding an environment variable to disable the C speedups? | `answered` only when the decision evidence is retrieved; [the final maintainer comment](https://github.com/pallets/markupsafe/issues/471#issuecomment-2422705831) explains the rationale. Safe abstention is preferable to an unsupported answer but remains an outcome miss for this answerable case. |
-| Unanswerable control | MarkupSafe | Why did MarkupSafe switch its release automation from polling to webhooks? | `insufficient_evidence`; the reviewed development snapshot contains no documented decision matching this premise. |
-
-The candidates are the current active Claude API tiers available for this
-comparison: `claude-haiku-4-5-20251001`, `claude-sonnet-5`, and
-`claude-opus-5`. At execution time their published standard prices were,
-respectively, `$1/$5`, `$2/$10`, and `$5/$25` per million input/output tokens.
-The exact identifiers, availability, and prices are rechecked immediately
-before execution because provider offerings can change.
-
-Each of the four cases runs once per model, for 12 agent runs. No failed or
-unfavourable output is replaced by a more convenient retry. The application
-limit permits at most three retrievals and therefore at most four Claude calls
-per agent run: the complete comparison is capped at 48 Claude calls and 36
-Voyage query embeddings. Runs execute sequentially. Before each new agent run,
-the comparison stops if accumulated estimated Anthropic spend has reached
-`$3.00`; no Batch API, prompt caching, fast mode, or provider-side tools are
-used.
-
-Every run records the structured outcome, searches and sufficiency assessments,
-retrieved evidence IDs, citations, model-call and retrieval latencies, token
-usage, estimated cost, and any provider or protocol error. Raw traces remain
-private local artifacts; only the reviewed aggregate result is added here.
-
-Selection first applies the hard requirements below. Among models without a
-hard failure, the primary comparison is correct grounded outcome across the
-four cases, including abstention on the control and no unsupported answer on
-the difficult miss. Useful refinement, fewer unnecessary searches, and
-claim-level citation support are reviewed explicitly. Cost is the first
-tie-breaker and latency the second; this small run selects the model for this
-project and does not establish that it is universally superior.
-
-### Final Claude-model comparison result
-
-The fixed 12-run comparison completed after the structural tool-calling
-correction. Its raw traces remain private local artifacts and the aggregate
-result is recorded here. All 12 planned agent runs completed — no run crashed
-on a provider, credential, or network failure — using 36 total Anthropic calls
-for an estimated total Anthropic cost of `$0.32678`, well under the `$3.00`
-stop. No run's model attempted a `refine_search` call after its three-search
-budget was exhausted and the tool was withheld, confirming the state-aware
-exhausted-budget guidance.
-
-| Model | Valid structured outcomes | Exact outcome/evidence match | Hard grounding failures | Anthropic calls | Mean wall-clock | Total cost |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Claude Haiku 4.5 | 4/4 | 3/4 | 0 | 12 | ~19.7 s | ~`$0.0351` |
-| Claude Sonnet 5 | 2/4 | 1/4 (plus correct abstention on the control) | 2 | 13 | ~18.0 s | ~`$0.0994` |
-| Claude Opus 5 | 4/4 | 4/4 | 0 | 11 | ~13.0 s | ~`$0.1922` |
-
-Claude Sonnet 5's two hard grounding failures were both caught by existing
-deterministic validators rather than silently accepted:
-
-1. On the direct-retrieval case, its final answer text contained
-   XML-like tool-format fragments and citation markers `[1]`, `[2]`, `[4]`,
-   while its actual structured `citations` list contained only one entry.
-   The citation-marker validator correctly rejected the mismatch.
-2. On the difficult-miss case, it cited a real MarkupSafe evidence ID that
-   its own retrieval had not returned during that run. The provenance
-   validator correctly rejected the unknown citation.
-
-The most plausible explanations for citing evidence the run did not retrieve
-are inference from the surrounding retrieved context or an outright
-fabricated-looking but coincidentally real ID; leaked pretraining knowledge
-of the specific comment is one further possible explanation but is not
-established by this run. The only established finding is that the cited
-evidence ID was not among the results `search_history`/`refine_search`
-returned during that run, which is exactly the condition the citation
-validator exists to catch.
-
-Claude Haiku 4.5's difficult-miss case did not fail: it retrieved and cited
-a real, on-topic MarkupSafe maintainer comment supporting the same general
-rationale (that the C speedups are not meant to be user-optional), but not
-the specific predeclared decision comment for that case. This is recorded as
-a non-exact evidence match, not a hallucination or grounding failure.
-
-Claude Opus 5 matched the predeclared expected outcome and expected evidence
-on all four cases, including retrieving and citing the intended
-difficult-miss decision comment directly on its first search, and recovering
-the recoverable-miss rationale from issue 155 through one `refine_search`
-call.
-
-Limitations of this result: it is one run per case per model across four
-development cases selected for chunk and tool-contract calibration, not a
-held-out or statistically powered evaluation; Claude API responses are
-expected to vary run to run; the measured latency differences do not show
-that Claude Opus 5 is generally faster than Claude Haiku 4.5 or Claude
-Sonnet 5; and the broader held-out evaluation with a reviewed question set
-remains the next stage of work. The selected model is recorded in the project
-decision log.
-
-### Gson development end-to-end answering pilot
-
-The selected `claude-opus-5` model then ran once on each of the four Gson
-development cases against the existing vector index. All cases completed
-without retry or structural protocol failure. No held-out question was sent to
-Voyage or Anthropic, and the index was reopened without document embedding.
-
-| Measure | Result |
-| --- | ---: |
-| Correct binary outcome | 2/4 |
-| Anthropic calls | 13 |
-| Input/output tokens | 38,219 / 3,233 |
-| Estimated Anthropic cost | `$0.271920` |
-| Voyage query requests/tokens | 9 / 109 |
-| Estimated Voyage query cost | `$0.00000654` |
-| Mean end-to-end latency | 16.42 s |
-
-The cost estimate uses the standard global Opus 5 price verified on
-2026-09-07 (`$5` per million input tokens and `$25` per million output tokens).
-The result was above the `$0.20–$0.25` central estimate but within its
-conservative development range.
-
-Qualitative review found three different failure modes:
-
-- The direct checked-versus-unchecked-exception case exhausted three searches
-  without retrieving the design-document section that the unchanged user
-  question had ranked first in the earlier retrieval pilot. The model safely
-  abstained, but the expected-evidence retrieval miss made the binary outcome
-  incorrect and shows that its first query discarded useful wording.
-- The semantic-reword subclassing case retrieved the expected design section
-  on its first search and produced a supported cited answer.
-- The adapter-precedence case reached the correct `answered` outcome and cited
-  strong alternative evidence, but one historical explanation in the answer
-  converted a source's explicitly speculative “maybe” into a factual claim.
-  This is a substantive claim-support failure even though every citation ID
-  was valid and returned during the run.
-- The false Maven-to-Gradle premise was corrected using relevant retrieved
-  evidence, but the model returned `answered` rather than the predeclared
-  `insufficient_evidence` outcome. The answer itself was supported; the fixed
-  version-1 ground truth remains unchanged, so this is still an outcome miss
-  and exposes ambiguity that must be resolved in the binary-answer guidance
-  before held-out controls are run.
-
-This development run validated the operational path and identified three
-prompt-level corrections: preserve the user's distinguishing wording in the
-mandatory first query, retain uncertainty qualifiers from evidence, and use
-the existing `insufficient_evidence` outcome when the rationale premise itself
-is unsupported or contradicted. The corrections preserved the accepted
-four-tool, three-search, two-outcome architecture and were frozen before the
-one-shot held-out run below, without another development-tuning loop.
-
-### Final Gson held-out result
-
-After the three prompt corrections were frozen as `answering-workflow/2`, the
-eight held-out cases were executed exactly once with no retry or further
-tuning. Before execution, the portfolio targets were fixed at vector Hit@5 of
-at least 4/6 answerable cases, outcome accuracy of at least 6/8, no malformed
-or unauthorized citation, mean answer latency no greater than 30 seconds, and
-total Anthropic cost no greater than `$0.75`.
-
-| Measure | Held-out result |
-| --- | ---: |
-| BM25 Hit@5 / MRR@5 | 4/6 / 0.444 |
-| Voyage/Chroma Hit@5 / MRR@5 | 6/6 / 0.833 |
-| Correct binary outcome | 8/8 |
-| Answers citing at least one predeclared expected source | 5/6 |
-| Malformed or unauthorized citations | 0 |
-| Claim-support review adequate | 8/8 |
-| Citation-completeness review adequate | 8/8 |
-| Total searches across answering runs | 16 |
-| Mean end-to-end answer latency | 15.14 s |
-| Anthropic input/output tokens | 74,871 / 5,930 |
-| Estimated Anthropic cost | `$0.522605` |
-| Voyage query requests/tokens | 22 / 317 |
-| Estimated Voyage query cost | `$0.00001902` |
-
-Voyage met the top-five retrieval target on all six answerable cases and was
-stronger than BM25 on this held-out set. All eight runs selected the expected
-binary outcome, including both unsupported-premise controls, and every
-generated claim was judged supported by its cited evidence. The uncertainty
-and false-premise prompt corrections behaved as intended in the cases that
-exercised them.
-
-One answerable semantic case remains an important limitation. Direct Voyage
-retrieval returned its predeclared design-document source, but the agent's own
-search sequence did not; the final answer used alternative retrieved history
-that supported its concrete claims but did not cover the complete
-predeclared collection/type-system rationale. This was not retried or tuned
-away. A second answer made one unnecessary refinement after its first search
-had already retrieved independently sufficient evidence, although that extra
-search added useful status and uncertainty context.
-
-All frozen portfolio targets were met. The result is a small eight-case
-held-out evaluation, not a statistically powered benchmark, but together with
-the recorded ingestion, persistence, retrieval, model-selection, cost, and
-failure measurements it is sufficient to close the MVP evaluation milestone.
-
-### Post-evaluation first-query diagnostic
-
-The held-out result above remains the frozen final evaluation. A subsequent
-bounded diagnostic investigated its one semantic-source limitation rather than
-rerunning or retuning the held-out set. The unchanged held-out question had
-already retrieved the expected Gson design-document chunk at rank two in direct
-Voyage retrieval; the Opus-generated near-paraphrase did not return it in the
-agent run. The diagnostic therefore used the exact user question for the first
-semantic search and invoked Claude only after those results existed.
-
-| Probe | Result | Searches / model calls | Wall-clock | Anthropic cost |
-| --- | --- | ---: | ---: | ---: |
-| Gson semantic case, Opus 5 | Complete grounded answer citing the expected design document | 1 / 1 | 9.16 s | `$0.030545` |
-| Same Gson case, Haiku 4.5 | Expected source cited, but answer added unsupported elaborations | 1 / 1 | 8.58 s | `$0.004578` |
-| Prior ItsDangerous direct failure, Sonnet 5 | Hard failure: cited an evidence ID absent from the run | 1 / 1 | 9.26 s | `$0.021702` |
-| Prior MarkupSafe difficult failure, Sonnet 5 | Hard failure: cited an evidence ID absent from the run | 1 / 1 | 10.03 s | `$0.019173` |
-
-The Opus result reduced the affected Gson case from three searches, four model
-calls, 25.22 seconds, and `$0.099770` while recovering the complete intended
-rationale. Haiku's low price did not compensate for its claim-support issue,
-and Sonnet reproduced both prior hard grounding failures. The product workflow
-therefore adopts the exact first semantic query and retains Opus. These four
-targeted probes cost `$0.075998` in total; they support an orchestration
-correction and model-retention decision, not new aggregate quality claims.
-
-### Post-evaluation conversational-follow-up diagnostic
-
-After bounded, session-scoped conversational follow-up support was added to
-the answering workflow, one paid diagnostic was run once, without retry,
-against the existing completed Gson vector index to check that the new
-orchestration path behaves as intended. It made no GitHub call, no indexing
-call, and no document-embedding call, and it did not replace or rerun the
-frozen held-out result above.
-
-The scenario supplied one prior completed turn about why Gson's own classes
-are marked `final`, then asked the intentionally ambiguous follow-up "Did it
-have any other benefit?" The mandatory first semantic search still used that
-exact ambiguous question and returned unrelated evidence. Opus used the
-supplied conversation context only to construct a standalone,
-context-resolved `refine_search` query about additional benefits of marking
-Gson classes `final`; the second search retrieved the expected
-design-document passage and a related historical issue. The final answer
-described the documented optimization opportunity as a minor benefit and
-noted that the associated performance claim had been disputed, and both
-claims were supported by citations returned during this run.
-
-| Measure | Result |
-| --- | ---: |
-| Outcome | `answered` |
-| Searches | 2 |
-| Anthropic calls | 2 |
-| Voyage query requests/tokens | 2 / 22 |
-| Document-embedding requests | 0 |
-| Anthropic input/output tokens | 8,308 / 474 |
-| Wall-clock time | ~12.92 s |
-| Estimated Anthropic cost | `$0.05339` |
-| Malformed or unauthorized citations | 0 |
-| Retries | 0 |
-
-This is one bounded behavioural diagnostic, not a statistically powered
-evaluation. It did not rerun or replace the frozen held-out evaluation above,
-and it does not establish broad conversational-follow-up quality; it shows
-that a context-resolved refinement can recover evidence an ambiguous exact
-first search misses, within the unchanged three-search budget and with
-citations still limited to evidence returned during the run.
-
-### Hard agent requirements
-
-These are pass/fail checks on every run:
-
-- the workflow makes no more than three semantic searches: one exact initial
-  query and at most two agent-requested refinements;
-- every retrieval call has a recorded `sufficient` or `insufficient`
-  assessment; and
-- the final `answered` or `insufficient_evidence` outcome uses the defined
-  structured result.
-
-A failure here is treated as a defect, not compensated for by a high average
-quality score.
-
-### Reviewed quality measures
-
-| Measure | What it checks |
-| --- | --- |
-| Outcome accuracy | `answered` or `insufficient_evidence` matches the reviewed expectation |
-| Refinement usefulness | A later query recovers useful evidence absent from the first result set |
-| Search efficiency | The system stops once evidence is sufficient instead of making unnecessary calls |
-
-## 5. Grounding evaluation
-
-Grounding evaluation checks whether every factual rationale claim is supported
-by evidence the agent was actually given. A citation that is merely related to
-the topic does not count as support.
-
-The following are hard pass/fail requirements:
-
-- every citation was returned during the current agent run;
-- every citation resolves to stored provenance and an original source URL; and
-- an answer never presents unsupported rationale as documented fact.
-
-The reviewed grounding measures are:
-
-| Measure | What it checks |
-| --- | --- |
-| Claim support | Evidence supports the specific rationale claim, not only the general topic |
-| Citation completeness | Every material factual rationale claim has supporting evidence |
-
-Claim support and citation completeness are reviewed by a person using a small,
-documented rubric. An additional model-based judge is not required for the MVP.
-
-## 6. Planned experiments
-
-Only comparisons that validate a product claim, select an MVP parameter, or
-expose a meaningful limitation belong in the evaluation:
-
-| Experiment | Purpose |
-| --- | --- |
-| BM25 versus vector retrieval | Measure lexical and semantic retrieval on identical chunks and questions |
-| One search versus bounded agent loop | Test whether a second or third search improves weak-first-search cases |
-| Three-model Claude comparison (completed) | Select the MVP model using the same tool contract, evidence, questions, and answer format |
-| End-to-end evaluation | Measure answers, abstentions, grounding, failures, latency, and cost together |
-
-The Claude comparison considers tool-call correctness, outcome accuracy,
-grounding, latency, and cost. It selects the most suitable model for this
-project, not a universally best model.
-
-The MVP does not require a large benchmark, an LLM judge, statistical analysis,
-many values of K, or comparisons across many models. A direct general-agent
-comparison, additional retrieval metrics, and deeper parameter experiments may
-be added later if the core results expose a useful question. Hybrid production
-retrieval, multiple embedding providers, vector-store benchmarks,
-multi-repository search, and additional platforms remain outside the MVP.
-
-## 7. System evaluation
-
-System evaluation measures operational behaviour: whether indexing produces a
-valid reusable snapshot, how long each stage takes, which external resources
-are consumed, what they cost, and where failures occur. It reports latency,
-API usage, cost, and failures as measurable results. Incomplete or silently
-truncated ingestion must never produce a ready snapshot.
-
-### Indexing measurements
-
-For each repository and indexing run, record:
-
-- wall-clock time for source collection and normalization, chunking,
-  embeddings, index construction, and validation;
-- repository-platform API calls and rate-limit consumption;
-- embedding requests, input tokens or units, and estimated cost;
-- source and chunk counts by type;
-- snapshot size on disk; and
-- skipped or failed items with their reasons.
-
-### Ingestion performance
-
-Authenticated builds used fixed public repository revisions so source identity,
-corpus completeness, request use, and elapsed time could be compared without a
-moving branch changing the input. These are development samples rather than the
-final evaluation corpus.
-
-| Repository revision | Issue/PR roots | Closed PRs | Commits | Tree entries | Sources |
+| ItsDangerous comment collection | 1,067 per-item requests | 334 repository-wide requests |
+| ItsDangerous complete workflow | 349.0 s serial | 50.0 s with repository-wide comments and 4 review workers |
+| MarkupSafe complete workflow | 63.5 s with 4 workers | 43.3 s with 8; 38.2 s with 16 |
+| Gson complete source build | Rejected by the original limits | 13,893 sources in about 290 s and 1,406 GitHub requests |
+
+**Decision.** Repository-wide collection was used where GitHub supported it,
+and eight workers were selected for per-pull-request review collection: most of
+the measured gain without taking the additional rate-limit risk of sixteen.
+The supported ceilings were expanded to the measured Gson envelope: 3,500
+issue/pull-request roots, 1,500 closed pull requests, 2,500 commits, 500 tree
+entries, 15,000 normalized sources, and 2,000 GitHub collection requests.
+Repositories beyond any ceiling are rejected rather than indexed partially.
+
+## 3. Reviewed question sets and expected evidence
+
+**Goal.** Define expected outcomes and evidence independently of the generated
+answers, and keep a final set unseen while the workflow was being tuned.
+
+**Why it was needed.** An answer model cannot grade its own historical claims.
+A fluent response may cite a related source without recovering the documented
+reason the reviewer expected. Development questions were also needed to reveal
+workflow defects without contaminating the final result.
+
+**How it was done.** This was not a unit test that could discover historical
+truth automatically. The reviewer first inspected repository history and saved
+each question, its expected `answered` or `insufficient_evidence` outcome, the
+supporting source IDs and URLs, and an explanation of why that evidence was
+sufficient. Evaluation runners then executed retrieval or answering against
+those saved cases and calculated the metrics. Automated tests checked the
+runner, metric calculations, result structure, and separation of question
+sets; manual review established historical relevance and answer support.
+
+“Development questions” were visible while choices were being improved. The
+“held-out questions” were set aside and not used for tuning; they were executed
+once only after the evaluated configuration and success targets had been fixed.
+
+| Question set | Repository | Cases | Purpose |
+| --- | --- | ---: | --- |
+| Chunk calibration | ItsDangerous and MarkupSafe | 6 answerable | Compare chunk sizes using known decision-bearing passages |
+| Claude model comparison | ItsDangerous and MarkupSafe | 4 per model | Direct retrieval, a recoverable miss, a difficult miss, and an unanswerable control |
+| Gson development questions | Gson | 4 | Identify retrieval and prompting defects before the final protocol |
+| Gson held-out questions | Gson | 8 | Final one-shot run: 6 answerable questions and 2 unsupported-premise controls |
+
+**Results.** Manual review corrected one candidate question that confused a
+proposal with an accepted change. The held-out questions remained unseen until
+the workflow, model, expected sources, and success targets had been fixed.
+
+**Decision.** Use the development sets to choose and correct the system, then
+lock the eight Gson held-out questions, their expected evidence, and the success
+targets before the final run. Results from that run would be reported without
+retry. Later diagnostics could explain a miss or test a subsequent improvement,
+but could not replace the published held-out result.
+
+## 4. Chunk-size calibration
+
+**Goal.** Choose a chunk size that preserved decision-bearing passages while
+avoiding unnecessary embedding and storage work.
+
+**Why it was needed.** Small chunks can separate a decision from its rationale;
+large chunks can dilute retrieval and increase model context. The choice needed
+evidence rather than an arbitrary default.
+
+### How the retrieval metrics were chosen
+
+The application retrieves at most five chunks per search, so evaluation uses
+the same top-five boundary. This makes the measurements reflect the evidence
+actually available to the answering workflow rather than an arbitrarily long
+ranking that the model never sees.
+
+| Measure | Why it was selected | How to read it |
+| --- | --- | --- |
+| Hit@5 | Tests the minimum retrieval requirement: did at least one pre-reviewed expected source reach the five chunks available to the answering workflow? | `5/6` means success on five of six questions, or 83.3%; the remaining question was a miss. |
+| MRR@5 | Distinguishes an expected source ranked near the top from one barely reaching fifth place, even when both count as hits. | Each question contributes `1 ÷ rank` for its first expected source, or 0 for a miss, and those values are averaged. The result ranges from 0 to 1 and is a ranking score, not a percentage. |
+| Passage containment | Checks whether the complete reviewed rationale remains together after chunking. | `6/6` means every reviewed passage fit within one chunk. |
+| Chunk count | Represents embedding, storage, and ranking work when quality measures tie. | Lower is preferable only when retrieval and passage preservation do not worsen. |
+
+Source Recall@5 was also recorded for questions that required several expected
+sources. It asks how many of those sources appeared in the top five, without
+letting several chunks from one source inflate the result. It was a case-level
+diagnostic rather than a deciding aggregate in the comparisons below, so it is
+not presented as a headline score.
+
+**Results.** Six reviewed questions were run against the same content at three
+maximum sizes. A 750-character candidate had already been dropped because it
+created the most fragments.
+
+| Maximum characters | Combined chunks | Hit@5 | MRR@5 | Reviewed passages kept together |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 7,503 | 5/6 | 0.625 | 6/6 |
+| 1,500 | 6,315 | 5/6 | 0.625 | 5/6 |
+| **2,000** | **5,576** | **5/6** | **0.625** | **6/6** |
+
+Here, Hit@5 of 5/6 and MRR@5 of 0.625 were not treated as an absolute grade of
+“good.” They showed that all three chunk sizes produced the same retrieval
+outcome: five questions found their expected source and one did not, with the
+same ranking score. Because retrieval could not distinguish the candidates,
+passage containment and chunk count determined the choice.
+
+**Decision.** The 2,000-character setting tied the best retrieval result,
+preserved all six reviewed passages, and produced 1,927 fewer chunks than the
+1,000-character setting. It was selected as the best measured trade-off for
+this corpus set, not as a universal optimum.
+
+## 5. Retrieval-method selection
+
+**Goal.** Determine whether the product path should use lexical BM25 retrieval
+or Voyage embeddings stored and searched through Chroma.
+
+**Why it was needed.** Semantic retrieval adds embedding time, cost, and an
+external provider. It needed to recover evidence that a cheaper keyword
+baseline missed. Both methods therefore used the same chunks, questions, and
+five-result limit.
+
+**Results.** The comparison was mixed across stages.
+
+| Evaluation stage | BM25 | Voyage/Chroma | Plain-language result |
+| --- | ---: | ---: | --- |
+| Initial six-question comparison | Hit@5 5/6; MRR@5 0.625 | Hit@5 3/6; MRR@5 0.292 | BM25 found the expected source for two more questions and usually ranked it earlier. |
+| Gson development questions | Hit@5 1/3; MRR@5 0.333 | Hit@5 2/3; MRR@5 0.444 | Vector retrieval found one additional expected source, but three questions were too few for a strong conclusion. |
+| Gson held-out questions | Hit@5 4/6; MRR@5 0.444 | **Hit@5 6/6; MRR@5 0.833** | Vector retrieval found expected evidence for all six questions and generally placed it near the top; BM25 missed two. |
+
+Mean search latency was 0.078 seconds for BM25 and 0.353 seconds for vector
+retrieval. BM25 won the initial exact-source comparison; vector search recovered
+an issue-comment rationale missed by BM25 in development and both BM25 misses
+in the final set.
+
+The strongest result was therefore not “MRR@5 is 83.3%.” It was that vector
+retrieval passed the predeclared Hit@5 target of at least 4/6 with 6/6, beat the
+BM25 baseline on the same held-out questions, and achieved an MRR@5 close to the
+maximum of 1. The earlier comparisons remain useful counter-evidence: vector
+retrieval did not win on every question set.
+
+**Decision.** Vector retrieval became the product path because it retrieved the
+expected evidence for all six answerable held-out questions. BM25 remained the
+evaluation baseline. This supports the choice on the reviewed corpora; it does
+not establish that semantic search is always superior.
+
+## 6. Answer-model and workflow selection
+
+**Goal.** Select an answering model that followed the evidence and citation
+contract, then correct observable workflow failures before the held-out run.
+
+**Why it was needed.** Retrieval success does not guarantee a grounded answer.
+The model must choose the right outcome, cite only retrieved evidence, and
+request another search only when needed. Invalid citations were treated as hard
+failures; claim support and citation completeness were reviewed separately.
+
+**Results.** Three Claude models answered the same four development cases from
+ItsDangerous and MarkupSafe against the same indexes and three-search budget.
+
+| Model | Valid outcomes | Exact outcome/evidence match | Hard grounding failures | Mean time | Cost |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `pallets/itsdangerous@672971d66a2ef9f85151e53283113f33d642dabd` | 433 | 307 | 677 | 60 | 1,659 |
-| `pallets/markupsafe@b2e4d9c7687be25695fffbe93a37622302b24fb1` | 522 | 367 | 844 | 55 | 2,148 |
+| Claude Haiku 4.5 | 4/4 | 3/4 | 0 | ~19.7 s | ~$0.035 |
+| Claude Sonnet 5 | 2/4 | 1/4 | 2 | ~18.0 s | ~$0.099 |
+| **Claude Opus 5** | **4/4** | **4/4** | **0** | **~13.0 s** | **~$0.192** |
 
-The `itsdangerous` comparison isolated two optimizations. Repository-wide
-comment collections replaced requests made separately for every issue and pull
-request. Bounded workers were then used only for per-pull-request review
-summaries, for which GitHub provides no repository-wide REST collection.
+After Opus was selected, a separate four-question Gson development run achieved
+only 2/4 correct outcomes. It exposed three problems: the initial query could
+lose useful user wording, the answer could overstate uncertainty, and false
+premises were not handled reliably.
 
-| Collection strategy | Collection requests | Collection seconds | Workflow seconds | Requests including lookup |
-| --- | ---: | ---: | ---: | ---: |
-| Per-item comments, serial | 1,067 | 342.7 | 349.0 | 1,077 |
-| Repository-wide comments, serial | 334 | 126.7 | 132.6 | 344 |
-| Repository-wide comments, four review workers | 334 | 44.2 | 50.0 | 344 |
+**Decision.** Opus was selected because it was the only tested model with four
+exact matches and no grounding failure. The prompt was corrected to preserve
+the user's distinguishing wording, retain uncertainty qualifiers, and use the
+abstention outcome when the rationale premise was unsupported. The bounded
+refinement workflow was then fixed for held-out evaluation. Sonnet's two
+invalid outputs remained recorded as rejected results rather than being counted
+as answers.
 
-Repository-wide collections reduced requests by 68.7% and collection time by
-63.0% without changing the 1,659 sources, per-type counts, corpus digest, or
-unique identities. Four review workers then reduced the complete workflow by a
-further 62.3% without adding requests.
+## 7. Held-out evaluation with a fixed configuration
 
-The `markupsafe` comparison measured the bounded review-worker setting. Every
-run used 400 collection requests and 411 requests including repository lookup,
-and produced the same 2,148 sources and corpus digest.
+**Goal.** Test six answerable Gson questions and two unsupported-premise
+controls once, without changing the evaluated configuration after seeing their
+results. Here, “fixed configuration” means the selected chunk size, retriever,
+answer model, prompt and search workflow, success targets, questions, and
+expected evidence.
 
-| Review workers | Collection seconds | Workflow seconds | Normalized collection requests/minute |
-| ---: | ---: | ---: | ---: |
-| 4 | 57.1 | 63.5 | 420 |
-| 8 | 37.3 | 43.3 | 643 |
-| 16 | 31.5 | 38.2 | 761 |
+**Why it was needed.** Development scores describe iteration, not
+generalization. The held-out run needed to show both positive behaviour
+(finding and explaining rationale) and negative behaviour (abstaining when
+related history did not support the question's premise).
 
-Moving from four to eight workers reduced complete workflow time by 31.8%.
-Doubling again to sixteen reduced it by only another 11.8% while increasing the
-request burst. Eight workers therefore provide the selected balance between
-latency and headroom below GitHub's independently enforced secondary rate
-limits. The requests/minute values are throughput extrapolations from phase wall
-time, not individual request latencies. No measured run received a rate-limit
-response. See [GitHub REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+**Results.** The system chose the correct `answered` or
+`insufficient_evidence` outcome in all eight cases, with no malformed or
+unauthorized citation. Manual review found adequate claim support and citation
+completeness in all eight. Five of the six answerable responses cited a
+predeclared expected source.
 
-The original conservative MVP envelope was 700 combined issue/pull-request
-roots, 500 closed pull requests, 1,100 commits, and 100 tree entries at
-admission, followed by runtime caps of 3,000 normalized sources and 750
-collection requests. It was intentionally based on the smaller development
-builds and is retained here as historical measurement context.
+The remaining answer was grounded but incomplete relative to the preferred
+rationale. Direct vector search contained that source, but the answering
+workflow's paraphrased query did not retrieve it. The alternative citations
+supported what the answer said, yet omitted part of what the reviewed evidence
+could have established. The stricter result therefore remained 5/6.
 
-The selected Gson experiment used explicit run-specific ceilings of 3,500
-combined issue/pull-request roots, 1,500 closed pull requests, 2,500 commits,
-500 tree entries, 15,000 normalized sources, and 2,000 collection requests. At
-the pinned commit `b3f4ca20087f9066de4c340522ff84e0558e1ad1`, the successful
-third attempt produced 13,893 sources in about 290 seconds using 1,406 GitHub
-requests including repository lookup. Source collection accounted for 1,371
-requests and about 262 seconds; the normalized snapshot occupied 19,248,406
-bytes. Offline chunking at 2,000 characters produced 17,479 deterministic
-chunks in about 2.5 seconds and a 23,278,322-byte chunk artifact.
+The unsupported-premise controls matter because related search results can make
+a false premise sound credible. For example, Gson's history contains
+logging-related items, but no evidence that Gson uses SLF4J internally or chose
+it over `java.util.logging`. The correct outcome for that control was therefore
+`insufficient_evidence`.
 
-The first two attempts failed late on one valid commit with a blank message;
-neither published a snapshot. The adapter now treats blank commit messages as
-non-rationale content, consistently with other empty discussion bodies. The
-successful snapshot is complete for normalized non-blank sources, but its local
-artifacts cannot reconstruct the exact number or identities of blank-message
-commits skipped. The final indexing report must disclose that measurement gap;
-it must not claim that no items were skipped. After the complete source, chunk,
-embedding, index-publication, and reopen path succeeded, the accepted product
-defaults were expanded to the same rounded ceilings used for the experiment:
-3,500 combined roots, 1,500 closed pull requests, 2,500 commits, 500 tree
-entries, 15,000 normalized sources, and 2,000 collection requests. This is a
-measured local-MVP envelope, not a production-scale claim.
+**Decision.** The held-out targets were accepted as met, while the 5/6
+expected-source result remained a visible limitation. No held-out question was
+retried for the published score.
 
-Repeated builds and immediate reuse preserved stable unique identities and the
-same corpus digest; failed or malformed collection never published a completed
-snapshot. The two completed samples do not establish general production
-capacity. Earlier probes found `BurntSushi/ripgrep` at 2,967 roots and
-`psf/black` at 5,238; the expanded root limit no longer rejects the former on
-that dimension alone, while the latter still exceeds it. Every other admission
-and runtime dimension remains independently binding.
+### Post-run diagnostics
 
-### Question-answering measurements
+Diagnostics did not change that decision or the published held-out results.
 
-For each question and in aggregate by category, record:
+- Re-running the incomplete case with the exact question first recovered the
+  preferred source in one search. Latency fell from 25.22 to 9.16 seconds and
+  answer cost from $0.099770 to $0.030545. This led to adoption of the
+  exact-question-first rule after the held-out evaluation.
+- A separate conversational diagnostic used prior-turn context to resolve an
+  ambiguous follow-up, found the relevant evidence in two searches, and
+  produced no invalid citations. This supported bounded session context rather
+  than persistent memory.
 
-- end-to-end response time;
-- latency for each `search_history` call and the answering-model work;
-- number of retrieval calls used, from one to three;
-- answering-model input and output tokens;
-- estimated cost per question;
-- final outcome and whether it matched the expected outcome; and
-- citation and claim-support review results.
+## 8. Operational performance and optimization
 
-Cost estimates record the provider price basis and date used, so later pricing
-changes do not make an old report ambiguous.
+**Goal.** Measure the cost of building, reopening, and questioning a large
+repository index, then reduce the slowest stages without changing the collected
+corpus or nominal provider usage.
 
-### Failure analysis
+**Why it was needed.** Retrieval quality alone does not show whether the tool is
+practical. GitHub collection and document embedding dominated cold indexing;
+answer-model calls dominated question latency. Optimization claims also needed
+controlled comparisons rather than two unrelated end-to-end runs against live
+services.
 
-Each unsuccessful case is assigned a primary failure stage:
+**Results.** The original held-out Gson build contained 13,893 sources and
+17,479 searchable chunks. Full collection, chunking, vector build, and
+validation took 543.49 seconds. It made 1,406 GitHub requests and 137 Voyage
+document-embedding requests for 2,965,021 tokens, with an estimated embedding
+cost of $0.177901. Reopening and validating the result took 2.63 seconds and no
+new document embeddings.
 
-- admission or indexing failure;
-- expected evidence not retrieved;
-- evidence retrieved but judged insufficient;
-- answer produced when the system should have abstained;
-- abstention despite sufficient retrieved evidence;
-- unsupported claim or incomplete support;
-- invalid or malformed citation;
-- retrieval loop exhausted without resolution; or
-- external API or provider failure.
+### 8.1 Document-embedding concurrency
 
-Reports show counts and representative examples for each observed failure
-type, rather than hiding them inside one aggregate success rate.
+**Question measured.** Could up to four Voyage embedding requests run
+concurrently and reduce elapsed time without changing the corpus, request
+count, accepted tokens, or estimated cost?
 
-## 8. Results, reproducibility, and visuals
+**Results.** The same completed 13,898-source snapshot and ordered 17,484
+chunks were embedded once sequentially and once with up to four overlapping
+requests.
 
-### When thresholds are fixed
+| Measurement | Sequential | Four-way parallel | Change |
+| --- | ---: | ---: | ---: |
+| Requests / accepted tokens | 137 / 2,965,723 | 137 / 2,965,723 | 0 |
+| Estimated cost | $0.177943 | $0.177943 | $0 |
+| Document-embedding time | 178.76 s | 124.77 s | **−30.2%** |
+| Vector build plus reopen | 232.38 s | 156.43 s | **−32.7%** |
 
-Question categories, evaluation-record fields, hard correctness requirements,
-and recorded operational measurements are fixed by this plan. Exact question
-count, K, retrieval-quality targets, grounded-answer targets, and acceptable
-latency or cost ceilings require a development pilot with real data.
-
-Those numeric targets must be recorded before the held-out evaluation begins.
-If a target changes after held-out results are seen, the change and its reason
-must be documented and the complete experiment rerun.
-
-### Reproducing a run
-
-Every reported run records:
-
-- repository and resolved commit;
-- snapshot and schema versions;
-- question-set version;
-- chunking parameters and K;
-- embedding and answering-model identifiers;
-- prompt or agent version;
-- relevant library versions;
-- run date; and
-- the documented command used to run the experiment.
-
-Small evaluation inputs and aggregate results may be committed. Credentials,
-generated repository snapshots, full indexes, and other private local data are
-not committed.
-
-The reviewed questions and expected evidence will be stored as a small
-versioned evaluation input. One evaluation command will run the cases,
-calculate the retrieval metrics, collect timings and usage, and generate a
-readable local report. Detailed traces and model outputs remain under
-private local storage; aggregate findings are added to this document so they
-can be reviewed without reading raw files.
-
-The offline artifact foundation now validates the question-set and run schemas,
-computes aggregates only from raw case records, and publishes seven local files
-atomically: `run-manifest.json`, `indexing.json`, `query-usage.json`,
-`retrieval-results.jsonl`, `answer-results.jsonl`, `summary.json`, and
-`report.md`. Query embeddings remain separate from document-embedding
-measurements, and unquantifiable measurement gaps remain separate from
-identified skipped items. Each manifest selects one development or held-out
-split. Loading a run with its reviewed question set recomputes the summary and
-report and rejects split leakage, cross-artifact disagreement, and applicable
-query-request totals that are lower than the raw vector results imply. Live
-workflow integration has a thin raw-result runner with explicit paid-mode
-gates; the retained private Gson runner can validate and republish offline,
-reuse a compatible index, and refuses a new paid build or query without its
-specific confirmation flag.
-
-### Visual evidence to add later
-
-No evaluation visual has been added yet. The recorded numeric results above
-remain the source for later generated charts. The most useful visuals will be:
-
-| Visual | What it demonstrates |
-| --- | --- |
-| Cited-answer screenshot | What an evidence-grounded answer looks like in the UI |
-| Insufficient-evidence screenshot | How explicit abstention is presented |
-| Real refinement trace | How a second or third search changes the retrieved evidence |
-| Retrieval comparison chart | BM25 and vector performance by question category |
-| Indexing-duration chart | Where indexing time is spent |
-| Failure-count chart | Which stages account for unsuccessful cases |
-
-Charts are generated from recorded evaluation results rather than assembled by
-hand. Screenshots illustrate product behaviour but do not replace measurable
+**Decision.** Retain four-way embedding concurrency. It reduced the full vector
+build and reopen path by 32.7% without changing nominal usage or cost. It is an
+indexing-performance decision, not evidence that vector search returns better
 results.
 
-For the product boundaries, architecture, and rationale behind accepted
-choices, see the other documents in this directory.
+### 8.2 GitHub collection concurrency
+
+**Question measured.** Could two independent GitHub collection operations
+overlap without changing the resulting ordered source corpus?
+
+**Results.** Two sequential baselines and one scoped concurrent run used the
+same Gson commit, made the same 1,372 collection requests, and produced
+byte-for-byte identical ordered source artifacts.
+
+| Measurement | Baseline 1 | Baseline 2 | Concurrent |
+| --- | ---: | ---: | ---: |
+| Source-collection time | 289.59 s | 275.03 s | **205.21 s** |
+| Normalized sources | 13,898 | 13,898 | 13,898 |
+| Source artifact SHA-256 | identical | identical | identical |
+
+Collection time fell by 25.4% to 29.1% against the baselines. The identical
+artifact mattered: the speedup did not come from omitting history.
+
+**Decision.** Retain the scoped collection concurrency. The improvement was
+larger than the variation between the two sequential baselines, while the
+resulting corpus remained identical.
+
+### 8.3 Final cold-index run
+
+**Question measured.** What was the complete cold-index time after both
+concurrency changes were accepted?
+
+**Results.** A staged run at Gson commit
+`b3f4ca20087f9066de4c340522ff84e0558e1ad1` exercised both accepted
+optimizations.
+
+| Stage | Time |
+| --- | ---: |
+| Repository lookup and revision resolution | 0.83 s |
+| Admission estimation | 26.88 s |
+| Source collection | 209.08 s |
+| Snapshot publication and validation | 1.76 s |
+| Chunking and reload validation | 2.82 s |
+| Vector build, including document embedding | 160.02 s |
+| Reopen validation | 2.97 s |
+| **Complete measured path** | **404.35 s (6.74 min)** |
+
+The run produced 13,898 sources, 17,484 chunks, and 17,484 indexed records. It
+made 1,407 GitHub requests including repository lookup and 137 Voyage requests
+for 2,965,723 tokens. Estimated document-embedding cost was $0.177943. The
+complete path was 97.95 seconds shorter than the earlier 502.30-second
+reference, but the controlled component experiments, rather than that
+single-run difference, support the attribution.
+
+**Decision.** Use 404.35 seconds as the final measured cold-index result for
+this environment, while using the two controlled component experiments as the
+evidence for why performance improved.
+
+### 8.4 Answer latency and index reuse
+
+**Question measured.** Which part of the ready-index question path dominated
+latency, and could a completed index reopen without new document embeddings?
+
+**Results.** Across the eight held-out questions, end-to-end latency ranged
+from 10.29 to 25.22 seconds, with a mean of 15.14 seconds. Semantic searches
+averaged 0.59 seconds per question in total; Claude calls averaged 14.55 seconds
+and therefore dominated observed answer latency.
+
+Reopening and validating the completed index took 2.63 seconds in the held-out
+record and made no new document-embedding request.
+
+**Decision.** Treat model calls, rather than retrieval, as the main observed
+answer-latency cost. Reuse completed indexes instead of rebuilding them for
+each question. These measurements are one-shot development benchmarks, not
+latency or throughput guarantees.
+
+## 9. Limitations and reproducibility
+
+**Goal.** Make negative results and the boundary of each claim as reviewable as
+the successful measurements.
+
+**Why it was needed.** A compact final score can hide failed builds, development
+iterations, corpus drift, and questions the evaluation never attempted to
+answer.
+
+**Results.** The record includes negative evidence: two Gson builds stopped on
+a blank commit message; Sonnet produced two rejected citations; the first Gson
+development run scored 2/4; final expected-source coverage was 5/6; and one
+held-out refinement was unnecessary.
+
+The main limitations are:
+
+- Eight held-out cases from one main repository do not support statistical
+  generalization.
+- No head-to-head comparison was run against a general coding agent with access
+  to the same Git history. The evaluation tests RepoRationale's evidence
+  contract and operating characteristics, not overall superiority.
+- End-to-end indexing was measured on one machine and network path. There is no
+  concurrent-user, sustained-load, or multi-platform benchmark.
+- Provider prices and live-service latency can change. Cold-index cost and
+  answer-generation cost are reported separately.
+- GitHub history is mutable. The held-out evaluation contained 13,893 sources;
+  later performance runs at the same code revision contained 13,898 because the
+  surrounding issue and pull-request history had changed.
+
+Each run records the repository revision, question set, retrieval settings,
+model identifiers, raw outcomes, timings, usage, recorded prices, and manual
+review. Aggregates are recomputed from raw records, and comparisons use source
+and chunk digests where corpus identity matters. Credentials, downloaded
+snapshots, generated indexes, and detailed traces remain local.
+
+**Decision.** Public claims are limited to the reviewed cases and controlled
+measurements. Direct-agent comparison, broader corpora, load testing, and
+provider-independent replication remain future evaluation work rather than
+implied capabilities of this release.
+
+## 10. Results at a glance
+
+The sequential evaluation led to a 2,000-character chunk limit, vector
+retrieval, Claude Opus 5, an exact-question-first bounded search workflow,
+measured repository admission limits, and controlled concurrency for the two
+slowest indexing stages.
+
+| Final measure | Result |
+| --- | ---: |
+| Vector retrieval on answerable held-out questions | **Hit@5 6/6; MRR@5 0.833** |
+| Correct `answered` / `insufficient_evidence` outcome | **8/8** |
+| Malformed or unauthorized citations | **0** |
+| Adequate claim support / citation completeness | **8/8 / 8/8** |
+| Answers citing a predeclared expected source | **5/6** |
+| Mean held-out answer latency | **15.14 s** |
+| Total Anthropic cost for eight answers | **$0.522605** |
+| Final cold Gson indexing time | **404.35 s (6.74 min)** |
+| Final reopen validation | **2.97 s, no new document embeddings** |
+
+Within that measured scope, RepoRationale built and reused a complete Gson
+index, retrieved the reviewed evidence, produced grounded answers, and abstained
+on both unsupported-premise controls. It also exposed the remaining weaknesses:
+one answer missed the preferred source, large-repository indexing still takes
+minutes, and comparison with direct general-agent exploration remains open.
+
+The result is evidence for the claims the project makes, not a claim of advantage
+beyond what was tested.

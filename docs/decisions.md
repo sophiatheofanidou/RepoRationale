@@ -1,6 +1,4 @@
-# RepoRationale — Decision Log
-
-**Last updated:** 2026-09-08
+# RepoRationale: Decision Log
 
 This file records important product and engineering decisions and the reasons
 behind them. It is intentionally a single lightweight log rather than a folder
@@ -17,7 +15,19 @@ Statuses:
 When a decision changes, preserve the old entry, mark it as superseded, and
 link to the replacement.
 
-## D-001 — Focus on documented technical rationale
+Current status notes:
+
+- Decisions are accepted unless their entry says otherwise.
+- [D-017](#d-017-defer-final-evaluation-corpus-selection) and
+  [D-026](#d-026-defer-final-corpus-selection-with-size-tiered-candidates) were
+  superseded when [D-029](#d-029-select-googlegson-as-the-main-evaluation-corpus)
+  selected the evaluation corpus.
+- [D-004](#d-004-make-bounded-tool-calling-part-of-the-core-mvp) remains
+  accepted except for its original model-generated first search, which
+  [D-030](#d-030-use-the-exact-user-question-for-the-first-semantic-search)
+  replaced with an application-owned exact-question search.
+
+## D-001: Focus on documented technical rationale
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -39,7 +49,7 @@ general code assistant.
 The primary corpus is repository history and decision-bearing documentation.
 The system must be able to say that a reason was not documented.
 
-## D-002 — Limit the MVP to one public GitHub repository
+## D-002: Limit the MVP to one public GitHub repository
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -59,7 +69,7 @@ The MVP will index one public GitHub repository at a time.
 Azure DevOps, GitLab, private-repository authentication, and cross-repository
 search remain outside the MVP.
 
-## D-003 — Use repository-native decision sources only in the MVP
+## D-003: Use repository-native decision sources only in the MVP
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -107,147 +117,58 @@ A future platform adapter defines its own supported native source types, states,
 and ingestion rules without changing the shared retrieval, citation, or agent
 contracts.
 
-## D-004 — Make bounded tool-calling part of the core MVP
+## D-004: Make bounded tool-calling part of the core MVP
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
 - **Amended:** 2026-09-07
 
-The initial-query portion of this decision is superseded by D-030. The
+The original model-generated first-search design is superseded by D-030. The
 structured refinement, answer, abstention, search-budget, and validation
 contracts remain accepted.
 
 ### Context
 
-A fixed retrieve-once-and-answer pipeline would demonstrate basic RAG but would
-not handle questions whose first retrieval lacks the necessary evidence. Some
-historical questions require query reformulation or a second, narrower search.
+A retrieve-once-and-answer pipeline cannot recover when the first results lack
+the necessary evidence. Some historical questions require one or two narrower
+searches, but an open-ended agent would make behaviour, cost, and evaluation
+hard to bound.
 
-The original decision left open exactly how the agent's non-retrieval actions
-(a search refinement's stated reason, the final grounded answer, and an
-abstention) would reach the application: the first MVP implementation asked
-the answering model to emit a single free-form JSON text block for each of
-these, alongside a `search_history` tool call when refining. This was
-exercised only with hand-written fake provider responses before the first
-live bounded-comparison run.
-
-That live run, on 2026-09-06, executed the fixed evaluation-development
-comparison across `claude-haiku-4-5-20251001`, `claude-sonnet-5`, and
-`claude-opus-5` and initially failed on all 12 planned runs, then continued to
-fail after an unrelated defect (missing explicit `tool_choice`, corrected in
-this same window) was fixed. The remaining, reproducible failures were:
-
-- Claude Haiku 4.5 returned a syntactically valid but completely blank final
-  text block (`stop_reason="end_turn"`, one `text` content block whose text
-  was the empty string) every time it was expected to answer or abstain, in
-  all 4 tested cases;
-- Claude Sonnet 5, when refining a search, called `search_history` again but
-  did not include the required accompanying text block carrying
-  `{"missing_information": "..."}`, so the parser found zero text blocks
-  where exactly one was required;
-- before `thinking` was explicitly disabled on every request, Claude Sonnet 5
-  also returned an unrequested `thinking` content block (adaptive extended
-  thinking, on by default for this model generation unless turned off) in
-  place of the required text, compounding the same failure.
-
-All three cases share one root cause: the design asked the model to reliably
-produce free-form text in a specific shape *simultaneously with, or instead
-of,* a tool call, and current models do not follow that combination
-reliably. Two remedies were considered:
-
-1. Keep the free-text-JSON design and mitigate through prompt engineering
-   (more explicit, example-driven instructions demanding the text block is
-   never omitted or left blank). This requires no contract change and stays
-   fully inside the original decision, but it is a probabilistic mitigation,
-   not a structural guarantee: nothing prevents the same failure from
-   recurring with a different question, a different model, or a later model
-   version, since the model is still free to omit or blank the required text.
-2. Move every non-retrieval action the model can take into its own
-   schema-validated tool call, and force `tool_choice` on every turn so the
-   model can only respond by calling exactly one of the tools it was
-   offered. This removes free-form text from the model's response entirely,
-   which is Anthropic's own documented recommendation for reliable
-   structured output, at the cost of changing the exact tool surface this
-   decision originally fixed at one tool.
-
-The user directed implementing the structurally correct fix (2) rather than
-the reversible mitigation (1), and recording that choice here rather than
-silently amending the contract.
-
-Verifying fix (2) with the same two reproducing cases exposed one further,
-smaller instance of the identical root cause: with `provide_answer`,
-`report_insufficient_evidence`, and `tool_choice` in place, both Claude
-Haiku 4.5 and Claude Sonnet 5 now called a schema-validated `search_history`
-tool cleanly on every turn, but when refining they left its now-optional
-`missing_information` field unset — because an optional field the model is
-merely asked, not required, to fill in is exactly the same shape of
-unreliability already observed, just narrowed to one field. `search_history`
-was accordingly split into the mandatory-first-call tool and a separate
-`refine_search` tool whose `missing_information` field its own schema marks
-required, closing the same gap the same way as the rest of this decision.
+The first implementation also asked Claude to combine tool calls with
+free-form JSON text for refinements and final outcomes. Live development runs
+showed that models could omit, blank, or inconsistently shape those text
+blocks. More prescriptive prompting could reduce the failures but could not
+make the response contract deterministic. Schema-validated tools provided a
+stronger boundary. The model comparison and observed failures are reported in
+the [evaluation](evaluation.md).
 
 ### Decision
 
-At the time of this amendment, the MVP agent had exactly two tools capable of querying repository
-history, both performing the identical bounded vector retrieval across all
-chunks in the active snapshot with no source, author, date, state, or
-repository-item filter, unchanged from the original decision:
-`search_history(query: str)` for the mandatory first search of a run, and
-`refine_search(query: str, missing_information: str)` for every later one.
-`missing_information` is required and non-blank on `refine_search` and does
-not exist on `search_history`; it is a same-call annotation of the model's
-own stated reason for refining and never changes what is retrieved.
+After the application-owned first search established by D-030, Claude may call
+exactly one schema-validated action per turn:
 
-The agent's two non-retrieval actions are also expressed as forced tool
-calls rather than free-form text: `provide_answer(answer: str, citations:
-[{evidence_id: str}, ...])` for a grounded answer, and
-`report_insufficient_evidence(explanation: str)` for an abstention. Every
-model turn after the first is requested with `tool_choice: {"type": "any",
-"disable_parallel_tool_use": true}` over whichever of these tools apply
-(`refine_search` is withheld once the three-call budget is exhausted), so
-the model can respond only by calling exactly one of them; the first turn
-forces `search_history` specifically with `tool_choice: {"type": "tool",
-"name": "search_history", "disable_parallel_tool_use": true}`. Extended
-thinking is explicitly disabled (`thinking: {"type": "disabled"}`) on every
-request so no model in this generation returns a `thinking` block in place
-of the required tool call.
+- `refine_search(query, missing_information)` to request a narrower semantic
+  search and state what evidence is still missing;
+- `provide_answer(answer, citations)` to return a grounded answer; or
+- `report_insufficient_evidence(explanation)` to abstain.
 
-The bounded-loop policy this decision established is otherwise unchanged:
-after each retrieval call the agent makes an explicit `sufficient` or
-`insufficient` evidence assessment against the user's question, may make at
-most three retrieval calls for one user question, may stop earlier as soon
-as evidence is sufficient, and after the third call must answer from the
-retrieved evidence or abstain.
+The application forces a single eligible tool call and disables extended
+thinking for these structured turns. `missing_information` is required and
+non-blank. The agent may use at most three searches in total, including the
+application-owned first search. It may stop earlier when the evidence is
+sufficient; after the third search it must answer from the retrieved evidence
+or abstain.
 
 ### Consequences
 
-The loop must be bounded, observable, testable, and evaluated. The
-sufficiency assessment, missing-information rationale, and next query are
-recorded for evaluation. A numeric model-generated confidence score is not
-used as an accuracy probability or stopping threshold. Specific repository
-identifiers may be included in the text query rather than passed as
-structured filters. The agent does not receive filesystem, shell,
-code-modification, or arbitrary external tools.
+The loop is bounded, observable, and testable. Searches, evidence-sufficiency
+assessments, and refinement reasons are recorded for evaluation. The model
+receives no filesystem, shell, code-modification, arbitrary external, or
+structured filtering capability. Citation validation and provider-neutral
+outcome contracts remain application responsibilities, while Anthropic-specific
+request and response shapes stay behind the provider boundary in D-007.
 
-The provider-neutral application workflow and domain contracts
-(`SearchRequested`, `FinalAnswer`, `FinalInsufficientEvidence`, and the
-bounded loop in `answer_question`) required no change: this amendment is
-confined entirely to the Anthropic adapter's request/response translation,
-confirming the provider-isolation boundary established by D-007. "One
-query-only tool" in this decision's title and consequences now specifically
-means the agent's query-only capability over repository history, split
-across `search_history` and `refine_search` for the reason given above; the
-agent's total tool surface was four tools, none of which accepted a repository,
-source, author, date, state, item-ID, backend, filter, or result-count
-parameter, and none of which grant filesystem, shell, code-modification, or
-external access. This amendment was re-verified against the full 12-run
-comparison recorded under D-015: with the fix in place, every run produced
-either a valid structured outcome or a citation/grounding failure that the
-existing validators correctly rejected, and no run's model attempted a
-`refine_search` call after the search budget was exhausted and the tool was
-withheld. Model selection itself is recorded under D-015.
-
-## D-005 — Require evidence-backed answers and explicit abstention
+## D-005: Require evidence-backed answers and explicit abstention
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -276,7 +197,7 @@ that was not returned during the current run. Citation correctness,
 claim-support quality, and abstention behaviour are first-class evaluation
 targets, not UI polish.
 
-## D-006 — Keep indexing manual in the MVP
+## D-006: Keep indexing manual in the MVP
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -305,10 +226,11 @@ run; any previously ready snapshot remains separately reusable. Background
 workers, durable job queues, incremental indexing, webhooks, and scheduled
 refresh remain post-MVP topics.
 
-## D-007 — Design one narrow portability boundary
+## D-007: Design one narrow portability boundary
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
+- **Amended:** 2026-09-10
 
 ### Context
 
@@ -325,15 +247,23 @@ API with explicit pagination and rate-limit handling; it will not maintain a
 parallel GraphQL ingestion path. No additional adapters or providers will be
 implemented in the MVP.
 
+Within GitHub collection, run the repository-wide pull-request review-comment
+request concurrently with the independent per-pull-request review-summary
+collection after the relevant pull-request numbers are known. Preserve
+deterministic output ordering, the shared request budget, and all-or-nothing
+failure behaviour.
+
 ### Consequences
 
 The core must not depend directly on GitHub response objects or provider SDK
-types, but it also must not introduce unused plugin infrastructure. Request
-concurrency is an ingestion implementation parameter to be introduced only if
-measured ingestion time warrants it, and must remain bounded so completeness,
-ordering, retry behaviour, and GitHub rate limits stay observable.
+types, but it also must not introduce unused plugin infrastructure. The scoped
+two-operation overlap was retained only after a controlled comparison produced
+the same ordered source artifact with lower collection time. Request
+concurrency remains bounded so completeness, ordering, failure behaviour, and
+GitHub rate limits stay observable. The comparison is recorded in the
+[evaluation](evaluation.md#82-github-collection-concurrency).
 
-## D-008 — Use Python as the implementation language
+## D-008: Use Python as the implementation language
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -355,10 +285,11 @@ The implementation will introduce unfamiliar components incrementally. The
 language decision does not select a web framework, UI, vector store, package
 manager, or model provider; those remain separate decisions.
 
-## D-009 — Use Chroma as the MVP vector store
+## D-009: Use Chroma as the MVP vector store
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
+- **Amended:** 2026-09-10
 
 ### Context
 
@@ -376,11 +307,11 @@ throughout the core application.
 ### Consequences
 
 The vector index is derived data and must be rebuildable from normalized source
-documents. PostgreSQL and pgvector remain outside the MVP, but replacing Chroma
-with PostgreSQL/pgvector is the first planned post-MVP improvement. The
-demonstration interface remains a separate decision.
+documents. PostgreSQL and pgvector remain outside the MVP and are one possible
+future storage direction; no post-release implementation is currently
+prioritized. The demonstration interface remains a separate decision.
 
-## D-010 — Implement the core RAG and agent loop without a large framework
+## D-010: Implement the core RAG and agent loop without a large framework
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -408,7 +339,7 @@ provider calls remain isolated behind the boundary established in D-007. This
 decision should be revisited only if the workflow grows beyond one bounded
 retrieval tool.
 
-## D-011 — Maintain a lean canonical documentation set
+## D-011: Maintain a lean canonical documentation set
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
@@ -421,20 +352,25 @@ can be shared across new development sessions and tools.
 
 ### Decision
 
-The canonical documentation will be limited to `project.md`, `architecture.md`,
-`plan.md`, `evaluation.md`, and this decision log. Tool-specific instruction
+The canonical sources of truth are the [project definition](project.md),
+[architecture](architecture.md), [implementation plan](plan.md),
+[evaluation](evaluation.md), and this decision log. Tool-specific instruction
 files may point to these documents but must not duplicate their content.
 
 ### Consequences
 
-New documents are created only when an existing canonical document becomes
-genuinely unusable. Brainstorming and external reference material are not
-sources of truth.
+Supporting presentation documents may be added when they serve a distinct
+reader need without becoming a new source of truth. The
+[product walkthrough](product-walkthrough.md), for example, explains the user
+experience through screenshots while deferring product, technical, and
+evaluation claims to the canonical documents. Brainstorming and external
+reference material are not sources of truth.
 
-## D-012 — Use pre-indexed retrieval as the primary evidence-access path
+## D-012: Use pre-indexed retrieval as the primary evidence-access path
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
+- **Amended:** 2026-09-10
 
 ### Context
 
@@ -447,8 +383,10 @@ may miss semantically related sources that use different terminology.
 ### Decision
 
 RepoRationale will pre-process supported sources into a searchable index and
-rank evidence for each question. The bounded agent will access repository
-history through `search_history` rather than freely exploring Git and GitHub.
+rank evidence for each question. The application-owned first search and later
+model-requested refinements both use the `search_history` application service.
+The model can request only the bounded `refine_search` action and cannot freely
+explore Git or GitHub.
 
 The MVP product path is vector RAG: `search_history` will use Voyage embeddings
 and the persisted Chroma vector index. During evaluation, a lean offline BM25
@@ -468,7 +406,7 @@ The project must not claim that indexed or semantic retrieval is superior until
 measured, and it must acknowledge that its value is primarily expected in
 larger repositories and repeated-use settings.
 
-## D-013 — Use Streamlit as the only MVP user-facing interface
+## D-013: Use Streamlit as the only MVP user-facing interface
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
@@ -505,9 +443,10 @@ multi-user, scaling, or durable background-processing need exists.
 FastAPI or a CLI can be reconsidered only if a concrete external-client,
 automation, or multi-user service need appears.
 
-## D-014 — Make PostgreSQL/pgvector the first post-MVP improvement
+## D-014: Make PostgreSQL/pgvector the first post-MVP improvement
 
-- **Status:** Accepted
+- **Status:** Superseded by
+  [D-032](#d-032-defer-selection-of-the-first-post-release-implementation)
 - **Date:** 2026-08-31
 
 ### Context
@@ -532,7 +471,7 @@ leak into the domain or agent layers. The same evaluation queries will be run
 before and after the migration to compare correctness, latency, and operational
 complexity.
 
-## D-015 — Use Anthropic Claude and select the exact model through evaluation
+## D-015: Use Anthropic Claude and select the exact model through evaluation
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
@@ -542,45 +481,19 @@ complexity.
 
 The generation model must interpret rationale questions, refine a query when
 necessary after the application-owned first search, assess evidence
-sufficiency, and produce a cited answer or abstain. Different Claude model tiers may trade
-off tool-use reliability, answer quality, latency, and cost, so the exact MVP
-model should not be fixed without project-specific evidence.
+sufficiency, and produce a cited answer or abstain. Different Claude tiers
+trade off tool-use reliability, answer quality, latency, and cost, so the exact
+model required project-specific evidence.
 
-The fixed 12-run development comparison defined in `evaluation.md`, across
-`claude-haiku-4-5-20251001`, `claude-sonnet-5`, and `claude-opus-5`, completed
-on 2026-09-06/07 after the structural tool-calling fix recorded in D-004. On
-this final run, Claude Haiku 4.5 and Claude Opus 5 passed every hard
-requirement on all four cases: no more than three retrieval calls, an
-explicit sufficiency assessment after every search, a valid structured
-`answered` or `insufficient_evidence` outcome, and no citation referring to
-evidence the run did not return. Claude Sonnet 5 failed two of the four cases
-on these same hard requirements — an answer whose `[1][2][4]` markers did not
-match its own one-item structured citations list on the direct-retrieval
-case, and a citation to a real but not-retrieved evidence ID on the
-difficult-miss case — both correctly rejected by the existing validators
-rather than silently accepted.
-
-Among the two models with no hard failure, only Claude Opus 5 matched the
-predeclared expected outcome and expected evidence on all four cases,
-including retrieving and citing the intended difficult-miss decision comment
-directly on its first search. Claude Haiku 4.5 matched three of the four: it
-missed only the difficult-miss case, where it retrieved and cited a
-different, real MarkupSafe comment supporting the same general rationale
-rather than the specific predeclared decision comment — a partial-evidence
-miss, not a fabricated citation. Opus was also the fastest of the three
-models on this run and Haiku the cheapest by a wide margin; full figures are
-recorded in `evaluation.md`. This was one run per case across four
-development cases, with expected run-to-run stochasticity, not a
-statistically powered study.
-
-After the held-out run exposed one case where Opus's near-paraphrase displaced
-an expected source that the unchanged question retrieved at rank two, a bounded
-diagnostic tested an application-owned exact first query. Opus then produced a
-fully grounded answer from the expected design document in one search and one
-model call. Haiku retrieved and cited the same source cheaply, but added
-unsupported elaborations. Sonnet was rerun only on its two prior hard-failure
-cases; both again cited evidence IDs absent from their respective runs. These
-diagnostics reinforce the Opus selection rather than reopening it.
+A fixed development comparison tested Claude Haiku 4.5, Sonnet 5, and Opus 5
+against the same four reviewed cases after the structured tool-calling contract
+in D-004 was established. Haiku and Opus completed all hard workflow
+requirements; Sonnet produced citation and grounding failures that the
+application correctly rejected. Opus was the only candidate that also matched
+the expected outcome and evidence in every case. Later diagnostics reproduced
+Sonnet's grounding failures and found unsupported elaboration in a Haiku
+answer, so they did not justify reopening the selection. The method, measured
+results, and limitations are recorded in the [evaluation](evaluation.md).
 
 ### Decision
 
@@ -601,25 +514,21 @@ failures recurred with the exact first query.
 ### Consequences
 
 The MVP requires an Anthropic API key and incurs usage-based generation cost.
-The comparison results are recorded in `evaluation.md`. The Claude model
-identifier remains an adapter-level configuration argument rather than a
-stored application default: no production composition root exists yet that
-would need one. When such a composition root is introduced, it must default
-to `claude-opus-5` and carry a test confirming that default; model selection
-still must not be exposed in the MVP UI.
+The application composition defaults to `claude-opus-5`, while the identifier
+remains configurable at the provider boundary for maintainers and tests.
+Model selection is not exposed in the UI.
 
 This was a small, project-specific development comparison, not a statistical
-study. It selects the most suitable model for this project's bounded agent
-loop and evidence set; it does not establish that Claude Opus 5 is
-universally superior to Claude Haiku 4.5 or Claude Sonnet 5 — including on
-the measured latency, which this single run per case cannot generalize.
+study. It selects the model for this bounded agent loop and evidence set; it
+does not establish that Opus is universally superior to Haiku or Sonnet.
 Another Claude model can still be substituted later without changing
 retrieval or domain logic.
 
-## D-016 — Use Voyage 4 for embeddings
+## D-016: Use Voyage 4 for embeddings
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
+- **Amended:** 2026-09-10
 
 ### Context
 
@@ -636,6 +545,11 @@ Keep the model identifier configurable for maintainers and tests, but do not
 expose embedding-model selection in the MVP UI. Isolate Voyage types behind a
 small embedding-provider boundary.
 
+Split document embeddings into bounded batches and allow up to four document
+requests in flight concurrently. Preserve input order when results are joined,
+keep query embedding as one synchronous request, and do not expose concurrency
+as an end-user setting.
+
 ### Consequences
 
 The MVP requires a separate Voyage API key in addition to the Anthropic key.
@@ -644,9 +558,17 @@ without implementing a general multi-provider plugin system. Retrieval quality
 must be measured on the project corpus; `voyage-4-large`, `voyage-4-lite`, or a
 different provider can be tested later if the evaluation exposes a need.
 
-## D-017 — Defer final evaluation-corpus selection
+Four-way document concurrency was retained after a controlled comparison
+reduced elapsed embedding time while preserving the corpus, request count,
+accepted tokens, estimated cost, and result order. This is an indexing
+performance decision, not a retrieval-quality claim. The comparison is
+recorded in the
+[evaluation](evaluation.md#81-document-embedding-concurrency).
 
-- **Status:** Accepted
+## D-017: Defer final evaluation-corpus selection
+
+- **Status:** Superseded by
+  [D-029](#d-029-select-googlegson-as-the-main-evaluation-corpus)
 - **Date:** 2026-09-01
 
 ### Context
@@ -654,22 +576,19 @@ different provider can be tested later if the evaluation exposes a need.
 A credible evaluation requires enough understanding of a repository to verify
 ground-truth answers, not merely judge whether generated answers sound
 plausible. [`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer),
-an author-owned companion repository created by the same developer as
-RepoRationale, has useful design documents and commit history but no
-pull-request history. It can support controlled dogfooding because its rationale
-is familiar and directly reviewable, but it is not an independent external
-corpus. An unfamiliar third-party repository may offer richer history but would
-require substantial domain study before its answers could be reviewed reliably.
-RepoRationale itself may accumulate suitable real history during implementation,
-but that history does not exist yet.
+an author-owned repository created by the same developer as RepoRationale, has
+useful design documents and commit history. Its value during development was
+that its rationale was familiar and directly reviewable, not that it was a
+dogfooding corpus. It is a separate product and has no pull-request history.
+An unfamiliar third-party repository may offer richer history but requires
+more domain study before its answers can be reviewed reliably.
 
 ### Decision
 
 Do not select the final evaluation repository during initial planning. Make the
 selection during final evaluation after the application works and the available
-candidate corpora can be inspected. The current provisional shortlist and
-repositories considered but not carried forward are maintained together in
-D-026.
+candidate corpora can be inspected. The provisional shortlist and repositories
+considered but not carried forward were recorded in D-026.
 
 Do not manufacture pull requests, issues, or rationale solely to make a corpus
 appear richer. Repositories must be indexed separately; this decision does not
@@ -680,10 +599,10 @@ introduce multi-repository search.
 Ingestion development may use fixtures and a convenient repository to validate
 GitHub ingestion without treating that repository as the final evaluation
 corpus. The final number and composition of reviewed questions will be set
-after corpus validation rather than fixed in advance. Corpus choice is not a
-blocker for the architecture document or repository skeleton.
+after corpus validation rather than fixed in advance. This deferral ended when
+D-029 selected Gson as the main evaluation corpus.
 
-## D-018 — Let the user select the repository in Streamlit
+## D-018: Let the user select the repository in Streamlit
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
@@ -709,7 +628,7 @@ small onboarding workflow to the Streamlit UI but does not introduce
 cross-repository search or a generalized connector platform. Corpus admission,
 local reuse, progress, and credential ownership are governed elsewhere.
 
-## D-019 — Index the complete supported corpus or reject the repository
+## D-019: Index the complete supported corpus or reject the repository
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
@@ -741,7 +660,7 @@ reasons. Preflight limits must account for all issues and for both merged and
 closed-unmerged pull requests. Scoped and incremental indexes remain possible
 future work, but would require scope-aware answers and abstention language.
 
-## D-020 — Persist reusable repository snapshots locally
+## D-020: Persist reusable repository snapshots locally
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
@@ -751,8 +670,8 @@ future work, but would require scope-aware answers and abstention language.
 Initial ingestion can be slow and consumes API quota. Repeating it after a page
 refresh, application restart, or computer restart would make the local product
 unnecessarily expensive and frustrating. The project also needs inspectable
-normalized data that can rebuild the vector store or support the planned
-PostgreSQL/pgvector migration.
+normalized data that can rebuild the vector store or support a future storage
+migration.
 
 ### Decision
 
@@ -786,7 +705,7 @@ Only small deterministic test fixtures, configuration examples, evaluation
 inputs, and aggregate results belong in Git. Separate local indexes may exist,
 but the application queries one active repository snapshot at a time.
 
-## D-021 — Use source-aware 2,000-character chunks and one embedding per chunk
+## D-021: Use source-aware 2,000-character chunks and one embedding per chunk
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
@@ -809,22 +728,13 @@ embedding and retains its source ID, URL, type, position, and relevant heading
 or discussion metadata.
 
 Use a maximum of 2,000 characters per chunk with no overlap for the MVP. This
-value was selected with a development-only calibration over two completed real
-repository snapshots. An initial deterministic boundary check narrowed the
-candidates from 750, 1,000, 1,500, and 2,000 characters to the three larger
-sizes. A subsequent six-question pilot used manually reviewed rationale
-questions, known supporting source IDs and passages, and the existing offline
-BM25 retriever at a fixed top-five result limit.
-
-All three shortlisted sizes retrieved the known source for five of six cases
-and had the same MRR@5 of 0.625. Both 1,000 and 2,000 characters retained all
-six supporting passages within one chunk, whereas 1,500 retained five and
-split one 1,502-character source into a 1,495-character chunk and a
-six-character remainder. The 2,000-character setting produced 5,576 chunks
-across the two corpora, 1,927 fewer than the 7,503 produced at 1,000, without
-reducing measured retrieval or passage containment. It therefore preserves
-more source-local context and avoids unnecessary derived records and embedding
-requests without showing a loss in this calibration.
+value was selected through a development-only calibration over two completed
+repository snapshots. Among the viable candidates, it preserved every reviewed
+supporting passage within one chunk, matched the best measured top-five
+retrieval result, and produced substantially fewer chunks than the
+1,000-character alternative. It therefore retained more source-local context
+without showing a loss in the calibration. The candidates, metrics, and full
+results are recorded in the [evaluation](evaluation.md).
 
 ### Consequences
 
@@ -837,7 +747,7 @@ not establish vector-retrieval or answer quality; later evaluation must report
 failures and may motivate a separately reviewed change rather than silently
 tuning this value after results are known.
 
-## D-022 — Use bring-your-own credentials
+## D-022: Use bring-your-own credentials
 
 - **Status:** Accepted
 - **Date:** 2026-09-01
@@ -862,10 +772,10 @@ offer those as end-user choices.
 Running the complete application requires accounts or API access with all three
 providers. A GitHub token supplies practical rate limits for public-repository
 ingestion but does not add private-repository support or an OAuth flow. The
-README and `.env.example` must document prerequisites and secret handling
-without containing real credentials.
+  [README](../README.md) and [`.env.example`](../.env.example) must document prerequisites and
+secret handling without containing real credentials.
 
-## D-023 — Normalize citation-addressable items as separate sources
+## D-023: Normalize citation-addressable items as separate sources
 
 - **Status:** Accepted
 - **Date:** 2026-09-02
@@ -901,7 +811,7 @@ evidence. Retrieval may later add bounded parent or neighbouring-context
 expansion if evaluation shows that isolated comments lack necessary context;
 such expansion is not required by this decision.
 
-## D-024 — Preserve platform-native source terminology behind one adapter boundary
+## D-024: Preserve platform-native source terminology behind one adapter boundary
 
 - **Status:** Accepted
 - **Date:** 2026-09-02
@@ -937,7 +847,7 @@ rewrite of the retrieval or agent layers. The MVP will not add a connector
 registry, dynamic plugin system, second platform adapter, or speculative common
 taxonomy.
 
-## D-025 — Keep standalone GitHub Discussions outside the MVP
+## D-025: Keep standalone GitHub Discussions outside the MVP
 
 - **Status:** Accepted
 - **Date:** 2026-09-02
@@ -967,9 +877,10 @@ source contract remains extensible, so a future GitHub adapter version can add
 a clear platform-native discussion source type without changing retrieval,
 storage, citation, or agent contracts.
 
-## D-026 — Defer final corpus selection with size-tiered candidates
+## D-026: Defer final corpus selection with size-tiered candidates
 
-- **Status:** Accepted
+- **Status:** Superseded by
+  [D-029](#d-029-select-googlegson-as-the-main-evaluation-corpus)
 - **Date:** 2026-09-02
 
 ### Context
@@ -1009,11 +920,11 @@ current shortlist:
   enough for the intended evaluation.
 
 [`Cross-PR Integration Risk Analyzer`](https://github.com/sophiatheofanidou/cross-pr-integration-risk-analyzer)
-remains useful as a controlled development, dogfooding, and secondary
-evaluation corpus because its Markdown decisions and commit history are
-familiar and reviewable. It is not a candidate for the main full-scope corpus
-because it has no pull-request history and therefore cannot exercise the
-complete supported source mix by itself.
+remained useful as a controlled development and secondary evaluation corpus
+because its Markdown decisions and commit history were familiar and
+reviewable. It was not a candidate for the main full-scope corpus because it
+had no pull-request history and could not exercise the complete supported
+source mix by itself.
 
 The shortlist is not limited to Python repositories and may be refined with
 recognizable candidates from the wider software-development community before
@@ -1021,14 +932,12 @@ final evaluation. Each repository must be indexed separately.
 
 ### Consequences
 
-Shortlisted means "evaluate later," not "already approved as the final
-corpus." Likewise, exclusion from this provisional shortlist is not a general
-judgment about repository quality. Candidate status does not waive corpus
-limits or establish ground truth. Ingestion measurements and final corpus
-inspection must confirm supported-source availability, complete-corpus size,
-explicit rationale, question quality, and reviewability.
+Shortlisted meant "evaluate later," not "approved as the final corpus."
+Exclusion was not a judgment about repository quality, and candidate status
+did not waive corpus limits or establish ground truth. D-029 records the final
+selection and closes this shortlist.
 
-## D-027 — Use Python 3.13 and uv for project and dependency management
+## D-027: Use Python 3.13 and uv for project and dependency management
 
 - **Status:** Accepted
 - **Date:** 2026-09-04
@@ -1059,7 +968,7 @@ and local environment stay synchronized. Dependency upgrades remain explicit
 rather than occurring silently. Contributors need uv, but do not need to
 manually create or activate a virtual environment for the documented workflow.
 
-## D-028 — Set conservative initial ingestion limits from measured builds
+## D-028: Set conservative initial ingestion limits from measured builds
 
 - **Status:** Accepted
 - **Date:** 2026-09-06
@@ -1069,19 +978,12 @@ manually create or activate a virtual environment for the documented workflow.
 
 The complete-corpus promise in D-019 requires the MVP to reject repositories
 whose supported history has not been shown to fit its synchronous local
-ingestion path. Authenticated ingestion builds measured two development repositories.
-The larger successful result had 522 combined issue/pull-request roots, 367
-closed pull requests, 844 commits, 60 tree entries, 2,148 normalized sources,
-and 400 source-collection requests. Separate four-, eight-, and sixteen-worker
-runs preserved the same corpus; eight workers provided the preferred balance
-between elapsed time and GitHub request-rate headroom.
-
-The later complete Gson evaluation build successfully collected 13,893
-normalized sources with 1,371 source-collection requests (1,406 including
-repository lookup) in about 290 seconds. Its chunk and vector artifacts also
-completed and reopened successfully. This demonstrated that the original
-limits were too conservative for the larger, long-lived repositories where
-the product is intended to be most useful.
+ingestion path. Authenticated builds first established a conservative envelope
+on development repositories. A later complete Gson build demonstrated that a
+substantially larger repository could be collected, indexed, published, and
+reopened safely, so the initial limits were expanded with measured headroom.
+The supporting corpus and performance measurements are recorded in the
+[evaluation](evaluation.md).
 
 ### Decision
 
@@ -1122,20 +1024,18 @@ must still pass every admission and runtime dimension; exceeding any ceiling
 remains an explicit rejection rather than partial indexing. Further expansion
 requires new measurements and a reviewed decision.
 
-## D-029 — Select google/gson as the main evaluation corpus
+## D-029: Select google/gson as the main evaluation corpus
 
 - **Status:** Accepted
 - **Date:** 2026-09-07
 
 ### Context
 
-The deferred corpus selection was revisited after read-only preflight
-measurement of recognizable Java, Python, JavaScript/TypeScript, C#, Go, and
-Rust repositories. The initial limits in D-028 proved conservative: none of
-the stronger widely recognized candidates fit every current admission limit.
-The evaluation therefore needs a measured expansion experiment without
-silently redefining the supported MVP envelope or jumping directly to a
-flagship monorepository.
+The deferred corpus selection was revisited after read-only preflight checks
+across recognizable repositories of several sizes and languages. The main
+evaluation needed enough long-lived and varied history to exercise the product
+where indexed retrieval is intended to be useful, while remaining small enough
+for complete local ingestion and manual evidence review.
 
 [`google/gson`](https://github.com/google/gson) is widely recognizable, offers
 history across the supported source types, and contains explicit repository-native
@@ -1146,33 +1046,22 @@ the scaling question while still supporting reviewable ground truth.
 
 ### Decision
 
-Use `google/gson` as the main external evaluation corpus, pinned to the exact
-commit resolved for the first successful complete source build. Keep
-[`serilog/serilog`](https://github.com/serilog/serilog) as the fallback if the
-Gson build or subsequent ground-truth review proves impractical.
-
-Evaluate Gson in gated stages: first build and validate the complete normalized
-source snapshot with explicit experimental limits; then establish a reviewed
-question set; then run offline lexical retrieval, paid vector retrieval, and
-paid end-to-end answering as separately measured steps. Require a separate
-cost estimate, stop condition, and user approval before each paid stage.
-
-The limits began as run-specific safety ceilings. After the complete Gson
-source, chunk, embedding, index-publication, and reopen path succeeded and its
-measurements were reviewed, the user accepted those rounded ceilings as the
-shared MVP defaults through the amendment to D-028. Further expansion still
-requires new measurements and a reviewed decision.
+Use `google/gson` as the main external evaluation corpus, pinned to an exact
+repository commit for reproducibility. Evaluate it in gated stages: complete
+source collection, reviewed question and evidence sets, retrieval comparison,
+answer evaluation, and operational measurement. The staged method and results
+belong in the [evaluation](evaluation.md). The successful full build supports
+the shared limits recorded in D-028; further expansion requires new evidence
+and a reviewed decision.
 
 ### Consequences
 
-The earlier shortlist has served its purpose and is no longer the active corpus
-selection. Gson now fits the measured shared MVP envelope; repositories beyond
-it remain explicitly unsupported rather than partially indexed. No partial or
-truncated corpus is acceptable. Generated snapshots, indexes, detailed traces,
-and credentials remain private local artifacts; only the small reviewed inputs
-and aggregate results may become versioned project material.
+The earlier shortlist in D-026 is no longer active. Gson fits the measured MVP
+envelope; repositories beyond it remain unsupported rather than partially
+indexed. Generated snapshots, indexes, detailed traces, and credentials remain
+private local artifacts.
 
-## D-030 — Use the exact user question for the first semantic search
+## D-030: Use the exact user question for the first semantic search
 
 - **Status:** Accepted
 - **Date:** 2026-09-07
@@ -1187,14 +1076,11 @@ retrieved the intended design-document chunk at rank two; Opus's generated
 query did not, and two refinements moved further away from the collection and
 type-system rationale.
 
-A bounded post-evaluation diagnostic sent the unchanged question directly to
-the same Voyage/Chroma index before invoking Claude. Opus retrieved and cited
-the expected design document, covered the complete rationale, and required one
-search and one model call instead of three searches and four model calls. A
-Haiku probe retrieved the same source but added unsupported elaborations. Two
-Sonnet probes on its prior hard-failure cases again produced unauthorized
-citations. Detailed outputs remain private; aggregate results are recorded in
-`evaluation.md`.
+A bounded post-evaluation diagnostic showed that sending the unchanged question
+to the same index recovered the expected source and allowed a grounded answer
+in one search and one model call. This isolated the first-query rewrite as an
+orchestration problem rather than a missing-corpus problem. The diagnostic and
+its limits are recorded in the [evaluation](evaluation.md).
 
 ### Decision
 
@@ -1220,7 +1106,7 @@ citations against all evidence returned during the run. The diagnostic is
 evidence for this orchestration correction, not a replacement held-out run or
 a statistically powered model comparison.
 
-## D-031 — Support bounded, session-scoped conversational follow-ups
+## D-031: Support bounded, session-scoped conversational follow-ups
 
 - **Status:** Accepted
 - **Date:** 2026-09-08
@@ -1235,32 +1121,14 @@ established by D-030 answers such a follow-up literally: its exact,
 unresolved pronoun becomes the mandatory first search, and the run has no way
 to know what "that" refers to.
 
-Two extremes were considered and rejected. Showing the visible chat history in
-the Streamlit UI without passing any of it to the answering model would leave
-the interface implying a continuous conversation while the model still
-treated every question in isolation; a pronoun-based follow-up would
-routinely fail to resolve, undermining the affordance the history display
-suggests. At the other extreme, durable or unbounded conversational memory —
-persisted across sessions, carried across repositories, or treated as
-reusable evidence for later claims — would reopen the bounded-agent and
-evidence-only-citation constraints already accepted in D-004, D-005, and
-D-010, and risks the system drifting toward a general-purpose chatbot rather
-than a bounded rationale-retrieval tool.
-
-The accepted design instead threads a small, explicitly non-evidentiary
-context object through the existing bounded agent loop. The implementation
-was independently reviewed against its actual diff and automated tests, then
-validated by one approved live diagnostic against the completed Gson index.
-The diagnostic's ambiguous follow-up ("did it have any other benefit?", after
-a prior turn about marking Gson classes `final`) retrieved unrelated evidence
-on the mandatory exact-question first search; Claude used the supplied
-conversation context to request one standalone, context-resolved
-`refine_search` call, which retrieved the expected design-document passage
-and a related historical issue, producing a fully grounded `answered`
-outcome with citations returned only during that run. The run used 2
-searches, 2 Anthropic calls, 8,308/474 input/output tokens, about 12.92
-seconds, and an estimated `$0.05339` Anthropic list-price cost, with zero
-malformed or unauthorized citations and no retry.
+Visible chat history without model context would imply continuity while leaving
+ambiguous follow-ups unresolved. Durable or unbounded memory would instead
+weaken the bounded-agent and evidence-only citation rules in D-004, D-005, and
+D-010 and move the product toward a general chatbot. The chosen middle ground
+is a small, explicitly non-evidentiary context window. A live Gson diagnostic
+confirmed that it could resolve an ambiguous follow-up while keeping all cited
+evidence within the current run; the measured result is recorded in the
+[evaluation](evaluation.md).
 
 ### Decision
 
@@ -1268,54 +1136,69 @@ Add a small provider-neutral `ConversationContext` of at most the three most
 recent completed turns of the current session, ordered oldest to newest. Each
 turn carries only the prior question, whether that turn's outcome was
 `answered` or `insufficient_evidence`, and the resulting answer or abstention
-explanation text — never citation excerpts, raw retrieved evidence, execution
-traces, provider messages, token usage, or SDK objects. An omitted or empty
-context preserves the established single-question behaviour exactly.
+explanation. It never carries citation excerpts, raw evidence, execution
+traces, provider messages, usage data, or SDK objects. Empty context preserves
+single-question behaviour.
 
 `answer_question()` accepts this context as an optional argument and passes
 it to the answering provider only on the first model turn, alongside the
 current question and that turn's initial search evidence, in a structure the
 Anthropic adapter labels clearly as non-evidentiary. The mandatory first
 semantic search established by D-030 is unchanged: it still uses the user's
-exact, unmodified current question, never a concatenation or rewrite that
-folds in prior turns. After seeing that evidence, Claude may use the supplied
-context only to resolve references, ellipsis, or the topic of the current
-question, and may request a standalone, context-resolved `refine_search`
-query within the existing three-search maximum; it may not cite a prior
-turn's content or treat a prior answer as evidence for the current one.
-Citation validation is unchanged from D-005: only evidence IDs actually
-returned by `search_history`/`refine_search` during the current run are
-valid, so an ID that appeared only in a prior turn's answer or citations
-remains rejected.
+exact current question. Claude may use prior turns only to resolve references,
+ellipsis, or topic and may request a standalone context-resolved refinement
+within the existing three-search limit. Prior turns never count as evidence.
+Only evidence returned during the current run can be cited, and the validator
+rejects every other evidence ID.
 
-Session ownership stays entirely with the future Streamlit caller, per D-013.
-It selects at most the three most recent completed turns from whatever
-longer visible chat history it retains and supplies them as context; it
-starts a fresh conversation on a browser refresh, a new browser session or
-tab, an application restart, a change of repository or snapshot, or an
-explicit future "New investigation" action. No conversation turn is written
-to the local snapshot, manifest, or any other persisted artifact; only the
-completed repository index remains locally persistent and reusable,
-unaffected by this decision. The answering workflow and Anthropic adapter
-remain session- and repository-agnostic; each answering run still constructs
-a fresh adapter instance whose Claude message history is never reused across
-separate questions.
-
-The answering workflow and agent version is bumped to `answering-workflow/4`
-to reflect this change to the provider-visible first turn. The three-search
-budget, the exact-question first search, and the two structured final
-outcome shapes are unchanged.
+The Streamlit session owns the visible history and supplies at most the three
+most recent completed turns. Context is cleared by a browser refresh, new
+session or tab, application restart, repository or snapshot change, or index
+rebuild. Conversation turns are not written to snapshots, manifests, or other
+persistent artifacts; only completed repository indexes persist. Each question
+still creates an independent answering run.
 
 ### Consequences
 
 A user can ask a natural pronoun-based or topically continuous follow-up
 within one session and one repository snapshot without restating prior
-context by hand, while every answer — including a follow-up's — remains
-grounded only in evidence retrieved during its own run. The Streamlit layer,
-not yet implemented, must select and reset context according to the
-boundaries above; the evaluation harness and the frozen held-out result are
-unaffected, since conversation context is optional and this MVP's reviewed
-question set exercises single-question cases. This is bounded session-scoped
-follow-up support, not durable chat history, cross-repository memory, or
-general-purpose conversational memory, and must not be broadened without a
-further reviewed decision.
+context by hand, while every answer, including a follow-up's, remains
+grounded only in evidence retrieved during its own run. The held-out evaluation
+remains unchanged because it used independent questions and conversation
+context is optional. This is session-scoped follow-up support, not durable chat
+history, cross-repository memory, or general-purpose conversational memory.
+
+## D-032: Defer selection of the first post-release implementation
+
+- **Status:** Accepted
+- **Date:** 2026-09-10
+
+### Context
+
+The completed first release exposes several possible directions for further
+work, including repository-limit changes, alternative persistence, more
+efficient source collection, additional content sources, durable conversation
+history, and external interfaces. The project has not yet established which of
+these would provide the most useful next increment. Prioritizing a storage
+migration before that comparison would turn a learning possibility into an
+unsupported roadmap commitment.
+
+### Decision
+
+Do not select a first post-release implementation yet. Evaluate candidate work
+against demonstrated user value, measured limitations, implementation cost, and
+the evidence needed to judge its outcome. Once a candidate is selected, record
+the product and technical choice explicitly and create a new bounded plan before
+implementation begins.
+
+This decision supersedes [D-014](#d-014-make-postgresqlpgvector-the-first-post-mvp-improvement).
+PostgreSQL and pgvector remain a possible storage direction, not a committed
+next step.
+
+### Consequences
+
+The completed first-release plan remains closed. No future direction listed in
+the [project definition](project.md#9-future-direction) has priority merely
+because it was considered during the initial build. Post-release work begins
+with evaluation and an explicit owner decision rather than an inherited
+roadmap assumption.

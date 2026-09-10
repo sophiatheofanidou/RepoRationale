@@ -1,413 +1,246 @@
-# RepoRationale — Implementation Plan and Current State
-
-**Project state:** Implementation  
-**Current milestone:** M6 — Demonstration and public documentation
-**Last updated:** 2026-09-08
-
-This document is the source of truth for current progress, the active
-milestone, and the next implementation steps. It is not a detailed activity log
-or a replacement for the product and architecture documents.
-
-## 1. Current state
-
-**Active task:** Build the minimal Streamlit demonstration and final public documentation
-**Task status:** Ready — Streamlit implementation itself has not started
-**Last completed work:** M5 remains closed with the frozen eight-case Gson
-held-out result. A bounded post-evaluation diagnostic then traced its one
-semantic-source limitation to the model-generated first query, and D-030 made
-the unchanged user question the mandatory first Voyage/Chroma search.
-
-Before starting the Streamlit build, the user approved one additional
-UI-independent slice: bounded, session-scoped conversational follow-up support
-in the core answering workflow (D-031), so the Streamlit layer would have a
-stable answering contract to call rather than being built against a design
-still in flux. The existing Streamlit mockups were deliberately left untouched
-and the Streamlit build itself was not started while this slice was
-implemented and independently reviewed. `ConversationTurn` and
-`ConversationContext` were added to the answering domain; `answer_question()`
-accepts an optional session-scoped context of at most three completed prior
-turns and passes it to the answering model only on the first turn, alongside
-the current question's initial evidence; the mandatory exact-question first
-search is unchanged, and Claude may use the context only to construct a
-context-resolved `refine_search` query within the unchanged three-search
-budget. Prior generated answers remain non-evidentiary: citation validation
-still accepts only evidence IDs returned during the current run. The
-implementation is versioned as `answering-workflow/4`.
-
-Independent review found no actionable defect in the diff. One approved live
-diagnostic against the completed Gson index then exercised the new
-orchestration path end to end: an intentionally ambiguous follow-up correctly
-triggered a context-resolved refinement, recovered the expected evidence, and
-produced a fully grounded, correctly cited `answered` outcome (recorded in
-`evaluation.md`).
-**Verification performed:** 51 focused answering/domain/adapter/evaluation-runner
-tests passed; the complete tracked suite passed with 700 tests; Ruff passed;
-all seven affected files passed the formatting check; strict mypy passed
-across 80 source files; and `git diff --check` passed. The only warnings were
-the pre-existing Chroma legacy-embedding-configuration deprecation warnings
-and a sandbox-specific pytest-cache warning, neither caused by this change.
-The frozen eight-case Gson held-out result and its prior full verification
-remain valid and unaffected.
-**Known limitations or deviations:** Blank commit messages are valid Git data
-and are excluded as non-rationale content, but the completed snapshot cannot
-reconstruct the exact count or identities skipped. The indexing report
-discloses this measurement gap separately rather than claiming zero known
-limitations. The larger limits are supported by one complete Gson measurement,
-not a production-capacity study. The conversational-follow-up diagnostic is
-one bounded behavioural run, not a statistically powered evaluation of
-conversational quality.
-**Open questions or blockers:** No evaluation blocker remains. The frozen
-held-out run still reports its original limitation rather than rewriting the
-result after diagnosis. The expanded repository limits are supported by one
-complete Gson measurement rather than a production-capacity study. The
-existing Streamlit mockups predate the accepted conversational-follow-up
-behaviour and have not yet been reviewed against it.
-**Next action:** Review the existing Streamlit mock direction with the user
-against the newly accepted conversational-follow-up behaviour before
-production Streamlit implementation begins.
-
-The project now has tested, repeatable ingestion, retrieval, and bounded
-agentic-answering foundations, including a completed and recorded Claude
-model selection. The completed work derives its artifacts from the canonical
-local corpus without reopening the GitHub ingestion scope.
-
-Agreed product boundaries are recorded in `project.md`. Accepted and proposed
-choices are recorded in `decisions.md`. The original draft remains reference
-material and is no longer authoritative.
-
-Python (D-008), Chroma for MVP vector storage (D-009), and a project-owned agent
-loop without a large orchestration framework (D-010) are accepted. Streamlit is
-the only MVP user-facing interface (D-013). PostgreSQL/pgvector is the first
-planned post-MVP improvement (D-014), not an MVP requirement. Anthropic Claude
-is the generation provider, with `claude-opus-5` selected as the MVP model
-through a bounded project-specific comparison (D-015), and Voyage 4 is the
-embedding model (D-016). Repository onboarding is bounded and self-service
-(D-018), accepted repositories are indexed across their complete supported
-corpus (D-019), local snapshots are persisted and reused (D-020), and
-embeddings are created per source-aware chunk (D-021). Users supply their own
-external-service credentials (D-022). The earlier evaluation-corpus deferral
-(D-017) was resolved in M5 by selecting Gson (D-029). The exact user question
-now drives the first semantic search before Opus is invoked (D-030). Bounded,
-session-scoped conversational follow-up questions are accepted as part of the
-core answering workflow, ahead of and independent of the Streamlit build
-(D-031).
-
-## 2. Immediate next steps
-
-1. Review the existing Streamlit mock direction with the user against the
-   newly accepted conversational-follow-up behaviour, before production
-   Streamlit implementation begins.
-2. Implement the minimal Streamlit product path without adding another backend,
-   CLI, provider, or deployment target.
-3. Use the existing application workflows for preflight, indexing, snapshot
-   reuse, retrieval, answering, citations, and abstention, including the
-   bounded conversational-follow-up context; add only the tests needed for
-   the user-facing composition.
-4. Condense the public README and evaluation presentation around the final
-   measured results, run the final verification once, and close the MVP.
-
-## 3. Milestones
-
-### M0 — Canonical project foundation
-
-**Status:** Complete
-
-**Goal:** Establish a compact source of truth before implementation.
-
-Deliverables:
-
-- approved project definition and MVP boundaries;
-- accepted initial decision log;
-- implementation plan;
-- lean architecture document;
-- initial evaluation plan;
-- root `AGENTS.md` and `CLAUDE.md` instructions that direct Codex and Claude to
-  the canonical documents and define startup, collaboration, privacy, review,
-  and session-handoff protocols.
-
-Exit criteria:
-
-- no unresolved disagreement about the primary user, product behaviour, or MVP
-  non-goals;
-- proposed implementation choices are either accepted, rejected, or assigned a
-  bounded technical spike;
-- a new AI session can understand the project and identify the next task from
-  the repository documents alone.
-
-### M1 — Language foundation and repository skeleton
-
-**Status:** Complete
-
-**Goal:** Establish a tested project skeleton without adding RAG complexity.
-
-Deliverables:
-
-- concise initial README that explains the project, its current status, and
-  points readers to the canonical documents without claiming unimplemented
-  behaviour;
-- Python environment and package structure;
-- formatter, linter/type-checker decisions, and pytest setup;
-- configuration and secret-handling approach;
-- local bring-your-own credential configuration for GitHub, Voyage, and
-  Anthropic without committing secrets;
-- minimal CI for automated quality checks;
-- small source-document domain model with tests.
-
-Exit criteria:
-
-- the project installs and tests from documented commands;
-- no API keys or generated indexes are committed;
-- the source-document model is independent of GitHub SDK response types.
-
-### M2 — GitHub ingestion
-
-**Status:** Complete
-
-**Goal:** Build a repeatable corpus from one public GitHub repository.
-
-Deliverables:
-
-- configurable public GitHub repository reference;
-- lightweight preflight with ready, indexing-required, and unsupported
-  outcomes;
-- development repository identification and validation, without assuming it
-  will become the final evaluation corpus;
-- pull request ingestion;
-- related issue ingestion;
-- commit-message ingestion;
-- Markdown-document ingestion;
-- normalization into the common source-document shape;
-- local snapshot manifest and normalized `sources.jsonl` output;
-- complete-supported-corpus enforcement without folder, date-window, or silent
-  truncation modes;
-- initial measured ingestion limits and clear rejection reasons;
-- fixture-based tests for malformed, missing, and repeated source data;
-- explicit full-index rebuild command.
-
-Exit criteria:
-
-- a sample repository produces a deterministic local corpus;
-- preflight rejects an inaccessible or over-limit repository before embedding;
-- repeated ingestion does not create duplicate source identities;
-- incomplete ingestion is never reported as a ready snapshot;
-- every normalized item preserves its type, original identifier, timestamp,
-  and source URL.
-
-### M3 — Retrieval foundation
-
-**Status:** Complete
-
-**Goal:** Retrieve relevant evidence independently of answer generation.
-
-Deliverables:
-
-- source-aware chunking;
-- lexical search baseline;
-- embeddings pipeline;
-- local persisted Chroma vector index;
-- one embedding per chunk with source and position metadata;
-- reusable per-repository snapshot loading across application restarts;
-- `search_history` service and tool contract;
-- retrieval tests against seed questions.
-
-Exit criteria:
-
-- both lexical and vector retrieval can be run on the same corpus;
-- expected evidence appears in the measured top results for the seed set;
-- retrieval results contain stable evidence IDs and provenance;
-- a completed index can be reopened without re-embedding its repository.
-
-### M4 — Bounded agentic RAG
-
-**Status:** Complete
-
-**Goal:** Produce grounded answers through a small observable tool-calling loop.
-
-Deliverables:
-
-- an application-owned exact-question first search and `refine_search` as the
-  agent's only retrieval tool;
-- configured maximum number of tool calls;
-- support for query refinement across bounded repeated calls;
-- bounded Claude-model comparison and recorded selection;
-- context construction from retrieved evidence;
-- answer schema with evidence references;
-- citation validation;
-- insufficient-evidence behaviour;
-- recorded tool calls, latency, and token usage required for evaluation.
-
-Exit criteria:
-
-- the agent cannot answer a rationale question without retrieved evidence;
-- it can perform a useful second retrieval on at least one defined test case;
-- citations refer only to evidence returned during the current run;
-- unanswerable seed questions produce the expected abstention behaviour.
-
-Exit-criteria verification: the application always completes the exact user
-question search before invoking the model, so the agent cannot answer without
-retrieval (D-030). The recoverable-miss case in the final comparison shows a useful
-second retrieval recovering evidence a first search missed, for all three
-compared models. Citation validation deterministically rejects evidence not
-returned during the run, demonstrated in the final comparison by the two
-Claude Sonnet 5 runs it correctly rejected (`evaluation.md`). The
-unanswerable-control case produced the expected `insufficient_evidence`
-abstention from all three compared models. All four M4 deliverables and exit
-criteria are satisfied; see `evaluation.md` for the recorded comparison
-result and `decisions.md` (D-004, D-015) for the tool-contract fix and model
-selection.
-
-### M5 — Evaluation
-
-**Status:** Complete
-
-**Goal:** Measure the system rather than relying on a polished demonstration.
-
-Deliverables:
-
-- selected and validated evaluation corpus or corpora, indexed separately;
-- a reviewed question set sized after corpus validation, including answerable,
-  semantic, ambiguous, and unanswerable cases;
-- ground-truth source references;
-- lexical-versus-vector retrieval comparison;
-- single-pass-versus-agentic retrieval comparison where appropriate;
-- citation and abstention review;
-- latency and cost report;
-- documented failure analysis.
-
-Exit criteria:
-
-- experiments are repeatable from documented commands;
-- results include failures and limitations, not only successful examples;
-- claims in the README are supported by recorded evaluation results.
-
-### M6 — Demonstration and public documentation
-
-**Status:** Ready
-
-**Goal:** Make the completed system understandable and runnable without
-expanding its scope.
-
-Deliverables:
-
-- repository input and preflight states in the local UI;
-- explicit indexing confirmation and phase-level progress;
-- ready-index reuse and manual rebuild choice;
-- Streamlit as the only user-facing interface;
-- bounded conversational follow-up questions in the local UI, scoped to the
-  current browser session and the one active repository snapshot;
-- concise public README;
-- architecture diagram;
-- representative query examples;
-- setup and demo instructions;
-- final test and evaluation run.
-
-Exit criteria:
-
-- a reviewer can understand the problem from the README without reading the
-  internal design documents;
-- a reviewer can run the supported demo path from documented commands;
-- all MVP success criteria in `project.md` are either satisfied or explicitly
-  reported as unmet.
-
-## 4. Proposed implementation order within a session
-
-Work should proceed in vertical, testable increments. A typical increment is:
-
-1. define or confirm the relevant contract;
-2. add a focused failing test or evaluation case;
-3. implement the smallest behaviour that satisfies it;
-4. run relevant automated checks;
-5. complete Codex review of the actual diff;
-6. update this plan and any other canonical document whose source-of-truth
-   content changed;
-7. have Codex present the exact commit scope and proposed message;
-8. after explicit user approval, create that checkpoint before beginning an
-   unrelated slice. If the checkpoint is deliberately deferred, record that
-   fact in the current state.
-
-## 5. Current risks
-
-### Sparse rationale
-
-Many repositories record what changed but not why. Corpus selection must verify
-that enough explicit rationale exists before the full evaluation set is built.
-
-### False grounding
-
-An answer can sound grounded while its citation is merely related rather than
-supportive. Evaluation must review claim-level support, not just link validity.
-
-### Scope expansion
-
-Additional platforms, source types, authentication, deployment, and automation
-can easily dominate the core project. The non-goals in `project.md` remain in
-force unless superseded by an accepted decision.
-
-### Technology adoption load
-
-Python, GitHub ingestion, embeddings, vector storage, tool-calling, evaluation,
-and UI are individually manageable but risky when introduced together. The
-milestones deliberately isolate these concerns.
-
-### Ingestion latency and API limits
-
-Repository size, discussion volume, GitHub pagination, network latency, and
-embedding throughput make initial indexing time variable. M2 must record phase
-timings and API usage, establish tested limits, require a GitHub token for
-practical non-trivial runs, and reject unsupported repositories before paid
-embedding work begins.
-
-### General-agent alternative
-
-A coding agent with direct Git and GitHub access may answer some questions as
-well as the indexed system, particularly on small repositories. The project
-must report this limitation honestly and use evaluation to identify where the
-specialized approach adds value.
-
-## 6. First post-MVP improvement — PostgreSQL/pgvector migration
-
-This improvement starts only after every MVP exit criterion is satisfied.
-
-Goal:
-
-- replace the Chroma storage implementation with PostgreSQL/pgvector;
-- rebuild vectors from normalized source documents rather than treating the
-  Chroma index as canonical data;
-- design relational tables, constraints, and migrations;
-- evaluate PostgreSQL full-text and vector retrieval options;
-- run the same retrieval evaluation before and after the change;
-- document differences in correctness, latency, complexity, and operations.
-
-This work must use the existing storage boundary. If unrelated core or agent
-code must be rewritten, the boundary design should be reviewed explicitly.
-
-## 7. Deferred ideas
-
-The following are intentionally not scheduled:
-
-- Azure DevOps or GitLab adapters;
-- PDFs, Slack, Confluence, or Jira;
-- private repositories and permission-aware retrieval;
-- MCP exposure;
-- automated or incremental re-indexing;
-- cloud deployment;
-- cross-repository search;
-- multiple agents;
-- production observability infrastructure.
-
-Deferred ideas become planned work only through an explicit accepted decision.
-
-## 8. Session handoff checklist
-
-At the end of a meaningful implementation session:
-
-- update the current milestone, active task, and task status;
-- record the last completed work, verification performed, and any blockers;
-- leave one exact next action for the next session;
-- record any newly accepted or rejected product/technical decision;
-- update architecture only when an implemented contract or component boundary
-  changed;
-- update evaluation only when a dataset, metric, experiment, or result changed;
-- do not copy chat transcripts into the documentation;
-- leave the repository in a state where the next session can identify one clear
-  next action.
+# RepoRationale: Implementation Plan and Completed Milestones
+
+RepoRationale has completed its first-release implementation plan and is ready
+for release. This document records how the project progressed from product
+definition to an evaluated Streamlit application. It is a completed delivery
+record, not an active task tracker.
+
+All implementation milestones are closed. Final publication actions, such as
+adding the MIT license, creating the release commit and tag, and publishing the
+GitHub release, are release administration. They do not keep the implementation
+plan open and are not tracked here.
+
+## 1. Milestone overview
+
+| Milestone | Purpose | Final state |
+| --- | --- | --- |
+| M0 | Establish the project definition and sources of truth | Complete |
+| M1 | Create the tested Python foundation | Complete |
+| M2 | Build a complete, repeatable GitHub corpus | Complete |
+| M3 | Add independently testable retrieval | Complete |
+| M4 | Build the bounded evidence-grounded answering loop | Complete |
+| M5 | Evaluate retrieval, answers, cost, latency, and failures | Complete |
+| M6 | Deliver the Streamlit demonstration and public documentation | Complete |
+
+The milestones were intentionally sequential. Each one established the
+contracts, implementation, or evidence required by the next.
+
+## 2. Completed milestones
+
+### M0: Canonical project foundation
+
+**Goal.** Establish a compact source of truth before implementation.
+
+**Delivered.**
+
+- A product definition covering the problem, target user, first-release scope,
+  non-goals, product principles, and limitations.
+- A decision log separating accepted choices from rejected or deferred
+  alternatives.
+- An initial architecture and evaluation approach.
+- Shared Codex and Claude working guides defining authority, privacy, review,
+  verification, Git authorship, and handoff responsibilities.
+- A milestone plan that split the project into bounded, testable increments.
+
+**Completion evidence.** Product scope and ownership were clear before coding
+began. A new session could restore the project's purpose, accepted boundaries,
+and next implementation step from the repository documents rather than chat
+history.
+
+### M1: Language foundation and repository skeleton
+
+**Goal.** Create a tested project foundation without introducing retrieval or
+agent complexity prematurely.
+
+**Delivered.**
+
+- Python 3.13 package structure under `src/`.
+- Reproducible dependency management with uv and a committed lockfile.
+- pytest, Ruff, formatting, strict mypy, and a minimal GitHub Actions workflow.
+- Environment-based configuration and a safe bring-your-own-credentials
+  pattern for GitHub, Voyage, and Anthropic.
+- Git ignore rules covering credentials, private context, generated snapshots,
+  indexes, traces, caches, and local environments.
+- Initial provider-independent domain models with focused tests.
+
+**Completion evidence.** The project installed from its locked dependencies,
+quality checks ran from documented commands, secrets and generated data stayed
+outside version control, and the core domain did not depend on GitHub SDK
+response objects.
+
+### M2: GitHub ingestion
+
+**Goal.** Build a deterministic, complete corpus from one selected public
+GitHub repository.
+
+**Delivered.**
+
+- Repository identity parsing, lookup, canonicalization, and revision
+  resolution.
+- Preflight outcomes for a ready snapshot, required indexing, unsupported
+  repository, and temporary external failure.
+- Collection of issues, pull requests, review summaries, discussion comments,
+  commit messages, and Markdown documentation.
+- Normalization into stable citation-addressable source documents.
+- Deterministic local snapshot manifests and `sources.jsonl` artifacts.
+- Repository-wide collection endpoints and bounded per-pull-request
+  concurrency where measurements justified them.
+- Measured admission limits and complete-corpus enforcement, with explicit
+  rejection instead of partial indexing.
+- Rebuild behaviour that protects an existing ready snapshot until the new
+  result has completed successfully.
+- Fixture-based tests for pagination, malformed responses, missing fields,
+  repeated data, renamed repositories, and failure handling.
+
+**Completion evidence.** Supported repositories produced complete,
+deterministic local corpora with stable source identities and provenance.
+Inaccessible or oversized repositories were rejected before embedding, and an
+interrupted build could not be mistaken for a ready snapshot.
+
+### M3: Retrieval foundation
+
+**Goal.** Retrieve relevant historical evidence independently of answer
+generation.
+
+**Delivered.**
+
+- Source-aware deterministic chunking with preserved provenance.
+- An offline BM25 lexical baseline.
+- Voyage document and query embeddings.
+- A locally persisted Chroma vector index.
+- One embedding per source-aware chunk, with stable source and position
+  metadata.
+- Shared ranked-evidence results across lexical and vector retrieval.
+- Snapshot compatibility checks and ready-index reopening without repository
+  re-embedding.
+- Retrieval, persistence, digest, record-count, and provenance tests.
+
+**Completion evidence.** BM25 and vector retrieval ran over the same persisted
+chunks, expected evidence could be measured independently of generation, and a
+completed index reopened with the same records and no new document embeddings.
+
+### M4: Bounded agentic RAG
+
+**Goal.** Produce grounded answers through a small, observable search and
+answer loop.
+
+**Delivered.**
+
+- An application-owned semantic search using the exact user question before
+  the answering model is invoked.
+- A separate model-requested refinement action with a maximum of three searches
+  per question.
+- Model context constructed only from retrieved evidence.
+- Structured outcomes for a cited answer or explicit insufficient evidence.
+- Deterministic rejection of malformed citations and citations to evidence not
+  returned during the current run.
+- A development comparison of Claude models and selection of Claude Opus 5 for
+  the first release.
+- Session-scoped conversational follow-ups that help resolve later questions
+  without treating previous generated answers as evidence.
+- Recorded searches, latency, token usage, cost, and failures needed for
+  evaluation.
+
+**Completion evidence.** The model could not answer before retrieval, a bounded
+refinement recovered evidence missed by an earlier search, invalid citations
+were rejected, unsupported questions produced the abstention outcome, and each
+follow-up answer remained grounded in evidence retrieved during its own turn.
+
+### M5: Evaluation
+
+**Goal.** Measure the system and its failure modes rather than relying on a
+polished demonstration.
+
+**Delivered.**
+
+- A staged corpus-selection process using familiar, development, external, and
+  oversized repositories for different evaluation questions.
+- Manually reviewed development and held-out question sets with predeclared
+  expected outcomes and evidence.
+- Chunk-size calibration using retrieval quality, passage containment, and
+  chunk volume.
+- BM25 and Voyage/Chroma comparisons over the same questions and chunks.
+- A controlled Claude model comparison.
+- A one-shot, eight-question held-out Gson evaluation with six answerable and
+  two unsupported-premise cases.
+- Separate review of outcome accuracy, claim support, citation completeness,
+  expected-source recovery, latency, usage, and cost.
+- Post-evaluation diagnostics that remained separate from the published
+  held-out result.
+- Controlled document-embedding and GitHub-collection concurrency experiments.
+- A final cold-index operating measurement and an explicit limitations section.
+
+**Completion evidence.** The evaluation reports successful, mixed, and failed
+results; explains why each metric was selected; separates deterministic checks
+from manual judgment; and limits its claims to what the recorded experiments
+support. The full method and results are in the
+[evaluation](evaluation.md).
+
+### M6: Demonstration and public documentation
+
+**Goal.** Make the completed product understandable and usable without
+expanding its accepted scope.
+
+**Delivered.**
+
+- A Streamlit interface kept as a thin presentation layer over the existing
+  application workflows.
+- Repository input and distinct ready, indexing-required, unsupported, and
+  temporarily-unavailable states.
+- Explicit indexing confirmation, cancel behaviour, and phase-level progress.
+- Ready-snapshot reuse, manual rebuild confirmation, and protection of the
+  working snapshot during rebuild.
+- Grounded answers with expandable evidence and links to original sources.
+- Explicit insufficient-evidence responses that keep related but inadequate
+  sources visibly separate.
+- Bounded contextual follow-ups within one browser session and repository
+  snapshot.
+- A consistent application theme and focused Streamlit smoke tests.
+- Release screenshots covering the primary path and alternative outcomes.
+- A concise [product walkthrough](product-walkthrough.md).
+- Release-facing revisions of the [project definition](project.md),
+  [evaluation](evaluation.md), and this completed plan.
+
+**Completion evidence.** A reviewer can follow the complete supported path from
+repository selection through indexing and grounded questioning, inspect the
+original evidence, observe abstention and failure states, and understand the
+workflow from the public screenshots. The implementation is covered by focused
+application tests and the consolidated verification below.
+
+## 3. Final verification
+
+The completed implementation passes the consolidated local quality checks:
+
+| Check | Result |
+| --- | --- |
+| `uv run pytest` | **741 passed** |
+| `uv run ruff check .` | **Passed** |
+| `uv run ruff format --check .` | **98 files already formatted** |
+| `uv run mypy` | **Passed: 89 source files** |
+
+The pytest run had no failures. Its warnings were limited to Chroma's legacy
+embedding-function configuration and an inability to write the local pytest
+cache in the execution environment. Neither affected the test outcomes.
+
+The repository also contains a
+[GitHub Actions workflow](../.github/workflows/ci.yml) that reproduces the
+locked environment and runs linting, formatting, type checking, and tests.
+Live provider measurements are not repeated during every local verification
+because they incur cost and depend on mutable GitHub history and network
+latency. Their recorded evidence remains in the
+[evaluation](evaluation.md).
+
+## 4. Plan closure
+
+The first-release implementation plan is complete. No known product, code,
+evaluation, or user-interface blocker remains within the accepted scope.
+
+The remaining license, repository-hygiene, commit, tag, push, and GitHub-release
+actions package and publish the completed work. They do not change the
+milestone outcomes recorded here.
+
+Future directions are summarized in the
+[project definition](project.md#9-future-direction), and the rationale for
+accepted or deferred choices remains in the [decision log](decisions.md). Any
+post-release implementation should start from a new bounded plan rather than
+reopening these completed milestones.

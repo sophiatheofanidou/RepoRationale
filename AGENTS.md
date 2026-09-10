@@ -1,4 +1,4 @@
-# RepoRationale — AI Collaboration Guide
+# RepoRationale: AI Collaboration Guide
 
 This file is the shared operating guide for AI agents working on
 RepoRationale. It defines how a new session restores context, how work is
@@ -8,13 +8,17 @@ coordinated, and how the repository is left ready for the next session.
 
 Read the following documents before proposing or changing project work:
 
-1. `docs/project.md` — product definition, users, MVP scope, and non-goals.
-2. `docs/decisions.md` — accepted and rejected product or technical choices.
-3. `docs/architecture.md` — current component boundaries and contracts, once it
-   exists.
-4. `docs/evaluation.md` — datasets, metrics, experiments, and results, once it
-   exists.
-5. `docs/plan.md` — current milestone, active task, progress, and next action.
+1. [Project definition](docs/project.md): users, first-release scope, and
+   boundaries.
+2. [Decision log](docs/decisions.md): accepted, superseded, and deferred
+   product or technical choices.
+3. [Architecture](docs/architecture.md): current component boundaries and
+   contracts.
+4. [Evaluation](docs/evaluation.md): datasets, metrics, experiments, and
+   results.
+5. [Implementation plan](docs/plan.md): completed first-release milestones and
+   verification. A future implementation cycle may introduce a new active
+   plan.
 
 These files are authoritative for their respective concerns. Do not create a
 second source of truth or treat old chat content as more current than the
@@ -36,10 +40,10 @@ canonical documents. Never commit, quote, summarize, or otherwise expose
   requested verification, and reports its handoff without editing project
   state or canonical documentation.
 - Codex is the planning, orchestration, documentation, and review owner. It
-  keeps the work aligned with the plan, authors each bounded implementation
-  prompt, reviews the actual changes and verification results, updates task
-  state and next actions, and checks architecture, evaluation quality, and
-  scope boundaries.
+  keeps implementation work aligned with any active plan, authors each bounded
+  implementation prompt, reviews the actual changes and verification results,
+  updates task state when one is being tracked, and checks architecture,
+  evaluation quality, and scope boundaries.
 
 These are default responsibilities, not capability restrictions. Either tool
 may perform another role when the user explicitly requests it. Avoid having two
@@ -55,25 +59,30 @@ At the beginning of every new session:
    their contents publicly.
 3. Inspect the current working tree and relevant implementation before relying
    on a previous agent's summary.
-4. Identify from `docs/plan.md` the current milestone, active task, task status,
-   last completed work, blockers or open questions, and exact next action.
-5. Confirm that the requested work belongs to the active milestone and does not
-   violate an accepted decision or MVP non-goal.
+4. Determine from the [implementation plan](docs/plan.md) whether the project
+   has an active implementation cycle or a completed delivery record. If a new
+   active plan exists, identify its milestone, task status, blockers, and exact
+   next action.
+5. Confirm that the requested work is either release administration or belongs
+   to an active plan, and that it does not violate an accepted decision or
+   first-release non-goal.
 6. Continue from the recorded state. Do not ask the user to repeat project
    context already captured in these files.
 
 If documents disagree, stop and surface the conflict instead of silently
-choosing one. If the plan is stale, reconcile it with the actual repository
-state before starting unrelated work.
+choosing one. Do not reopen a completed plan for release administration or
+small documentation corrections. New post-release implementation requires a
+new bounded plan.
 
 ## 4. Working protocol
 
-- Work in small, testable vertical slices tied to the active task.
+- When implementation is governed by an active plan, work in small, testable
+  vertical slices tied to its active task.
 - Define logical commit checkpoints when planning a milestone. After Codex
   accepts a vertical slice, stop before starting an unrelated slice: Codex
   presents the exact files and proposed message, the user explicitly approves
   the commit, and only then is the checkpoint created. If the user deliberately
-  defers it, record that choice in `docs/plan.md` rather than silently
+  defers it, record that choice in the active plan rather than silently
   accumulating multiple accepted slices. Claude never creates the checkpoint.
 - Do not implement deferred features or broaden supported platforms, sources,
   authentication, deployment, or infrastructure without an accepted decision.
@@ -89,8 +98,9 @@ state before starting unrelated work.
   purpose of each document; do not copy chat transcripts into the repository.
 - Keep internal tracking identifiers confined to their source-of-truth files:
   milestone identifiers (the letter M followed by a number) may appear only in
-  `docs/plan.md`, and numbered decision identifiers may appear only in
-  `docs/decisions.md` and `docs/plan.md`. In source code, tests, README,
+  the [implementation plan](docs/plan.md), and numbered decision identifiers
+  may appear only in the [decision log](docs/decisions.md) and
+  [implementation plan](docs/plan.md). In source code, tests, README,
   architecture, evaluation, and other audience-facing material, state the
   relevant behaviour or rationale directly without those internal identifiers.
 
@@ -131,9 +141,10 @@ its repository-local identity before the first commit.
 ## 6. Implementation and review handoff
 
 When Claude finishes an implementation task, it reports to Codex without
-editing `docs/plan.md`, `docs/project.md`, `docs/decisions.md`,
-`docs/architecture.md`, `docs/evaluation.md`, or the agent instruction files.
-Its handoff should state:
+editing the [implementation plan](docs/plan.md),
+[project definition](docs/project.md), [decision log](docs/decisions.md),
+[architecture](docs/architecture.md), [evaluation](docs/evaluation.md), or the
+agent instruction files. Its handoff should state:
 
 - the bounded outcome completed;
 - the main files or contracts changed;
@@ -153,10 +164,10 @@ and milestone completion normally do.
 
 ## 7. End-of-session protocol
 
-After a meaningful work session, Codex updates `docs/plan.md` so a fresh
-session can resume without chat history. Implementation agents report their
-results to Codex and do not edit the plan. Keep its handoff state compact and
-include:
+After meaningful work governed by an active implementation plan, Codex updates
+that plan so a fresh session can resume without chat history. Implementation
+agents report their results to Codex and do not edit the plan. Keep its handoff
+state compact and include:
 
 - current milestone;
 - active task;
@@ -167,14 +178,18 @@ include:
 - open questions or blockers;
 - one exact next action.
 
-Update other documents only when their source-of-truth content changed:
+When no active implementation plan exists, do not reopen the completed plan for
+release administration or small documentation corrections. Update other
+documents only when their source-of-truth content changed:
 
-- product scope or behaviour → `docs/project.md`;
-- accepted or rejected choice → `docs/decisions.md`;
-- component boundary or technical contract → `docs/architecture.md`;
-- dataset, metric, experiment, or result → `docs/evaluation.md`;
+- product scope or behaviour → [project definition](docs/project.md);
+- accepted or rejected choice → [decision log](docs/decisions.md);
+- component boundary or technical contract →
+  [architecture](docs/architecture.md);
+- dataset, metric, experiment, or result →
+  [evaluation](docs/evaluation.md);
 - private learning explanation → `.local/learning-notes.md`, when available.
 
-Before declaring a milestone complete, verify its exit criteria in
-`docs/plan.md`. Leave the repository with one clear next action even when the
-current task is blocked or incomplete.
+Before declaring a milestone in an active plan complete, verify its exit
+criteria. Leave active implementation work with one clear next action even when
+the current task is blocked or incomplete.

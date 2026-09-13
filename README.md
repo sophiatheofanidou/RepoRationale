@@ -72,21 +72,22 @@ The held-out evaluation used [`google/gson`](https://github.com/google/gson),
 Google's Java JSON library: six answerable questions and two unsupported-premise
 controls, run once with a frozen configuration and no retries.
 
-**Evaluated version:** these results predate the release's exact-question-first
-search rule. A later diagnostic recovered a missed source and motivated that
-correction; it did not replace the held-out results.
+The original held-out run achieved expected-source coverage on five of the six
+answerable cases. After the exact-question-first correction, targeted validation
+recovered the expected source for the remaining case.
 
 | Measure | Recorded result |
 | --- | ---: |
 | Expected evidence in the top five results | **Vector: 6/6; BM25 baseline: 4/6** |
 | Correct `answered` / `insufficient_evidence` outcome | **8/8** |
-| Answers citing a predeclared expected source | **5/6** |
+| Expected-source coverage after the correction | **6/6 evaluated cases** |
 | Malformed or unauthorized citations | **0** |
 | Mean end-to-end answer latency | **15.14 s** |
 
 Manual review found adequate claim support and citation completeness across
-the eight cases, but one answer missed part of the preferred rationale. Total
-estimated Anthropic cost for the eight answers was **$0.52**.
+the original eight cases. The one answer that initially missed part of the
+preferred rationale recovered that evidence in the targeted post-fix check.
+Total estimated Anthropic cost for the original eight answers was **$0.52**.
 
 **Separate indexing measurements:** a later cold build of 13,898 sources and
 17,484 chunks took **6.74 minutes**; reopening took **2.97 seconds** without

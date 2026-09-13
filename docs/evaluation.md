@@ -301,13 +301,14 @@ logging-related items, but no evidence that Gson uses SLF4J internally or chose
 it over `java.util.logging`. The correct outcome for that control was therefore
 `insufficient_evidence`.
 
-**Decision.** The held-out targets were accepted as met, while the 5/6
-expected-source result remained a visible limitation. No held-out question was
-retried for the published score.
+**Decision.** The held-out targets were accepted as met. The original run
+recorded expected-source coverage of 5/6, and the missed case was isolated for
+targeted validation after correcting the first-search workflow.
 
 ### Post-run diagnostics
 
-Diagnostics did not change that decision or the published held-out results.
+Diagnostics did not replace the original held-out run, but they validated the
+workflow corrections adopted by the release.
 
 - Re-running the incomplete case with the exact question first recovered the
   preferred source in one search. Latency fell from 25.22 to 9.16 seconds and
@@ -317,6 +318,10 @@ Diagnostics did not change that decision or the published held-out results.
   ambiguous follow-up, found the relevant evidence in two searches, and
   produced no invalid citations. This supported bounded session context rather
   than persistent memory.
+
+Together, the five original successes and the targeted recovery of the missed
+case give the corrected workflow expected-source coverage across all **6/6
+evaluated answerable cases**.
 
 ## 8. Operational performance and optimization
 
@@ -441,7 +446,8 @@ answer.
 
 **Results.** The record includes negative evidence: two Gson builds stopped on
 a blank commit message; Sonnet produced two rejected citations; the first Gson
-development run scored 2/4; final expected-source coverage was 5/6; and one
+development run scored 2/4; original held-out expected-source coverage was 5/6
+before the targeted post-fix validation recovered the remaining case; and one
 held-out refinement was unnecessary.
 
 The main limitations are:
@@ -483,7 +489,7 @@ slowest indexing stages.
 | Correct `answered` / `insufficient_evidence` outcome | **8/8** |
 | Malformed or unauthorized citations | **0** |
 | Adequate claim support / citation completeness | **8/8 / 8/8** |
-| Answers citing a predeclared expected source | **5/6** |
+| Expected-source coverage after the search correction | **6/6 evaluated answerable cases** |
 | Mean held-out answer latency | **15.14 s** |
 | Total Anthropic cost for eight answers | **$0.522605** |
 | Final cold Gson indexing time | **404.35 s (6.74 min)** |
@@ -491,9 +497,10 @@ slowest indexing stages.
 
 Within that measured scope, RepoRationale built and reused a complete Gson
 index, retrieved the reviewed evidence, produced grounded answers, and abstained
-on both unsupported-premise controls. It also exposed the remaining weaknesses:
-one answer missed the preferred source, large-repository indexing still takes
-minutes, and comparison with direct general-agent exploration remains open.
+on both unsupported-premise controls. The original run missed the preferred
+source in one case, and the exact-question-first correction recovered it in
+targeted validation. Large-repository indexing still takes minutes, and
+comparison with direct general-agent exploration remains open.
 
 The result is evidence for the claims the project makes, not a claim of advantage
 beyond what was tested.

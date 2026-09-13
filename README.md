@@ -2,10 +2,13 @@
 
 > Ask why the code changed. Get the evidence behind it.
 
-RepoRationale is a local, evidence-grounded agentic RAG application that
-indexes the decision history of a public GitHub repository and answers "why"
-questions with inspectable citations or an explicit insufficient-evidence
-result.
+RepoRationale helps developers find the documented reasons behind technical
+changes in a public GitHub repository. It indexes repository history locally
+and answers questions with inspectable sources, or reports when the retrieved
+evidence is insufficient.
+
+**Engineering focus:** Python · Generative AI · Agentic RAG · Semantic
+retrieval · LLM tool calling · Prompt and context engineering · LLM evaluation
 
 [![CI](https://github.com/sophiatheofanidou/RepoRationale/actions/workflows/ci.yml/badge.svg)](https://github.com/sophiatheofanidou/RepoRationale/actions/workflows/ci.yml)
 
@@ -19,7 +22,7 @@ result.
 <p align="center">
   <img src="docs/assets/screenshots/grounded-answer-gson.png" alt="RepoRationale answering why Gson classes were marked final, with an expanded source citation" width="900">
 </p>
-<p align="center"><em>A grounded answer with the supporting repository evidence available for inspection.</em></p>
+<p align="center"><em>An example of a grounded answer, with citations and an expanded supporting source.</em></p>
 
 ## Why RepoRationale
 
@@ -28,26 +31,18 @@ workaround, or design choice exists. That rationale may be scattered across
 years of pull requests, issues, commit messages, review discussions, and
 documentation.
 
-RepoRationale indexes the complete supported history once and provides an
-explicit evidence contract for every question:
+RepoRationale makes that history reusable through a local index and a bounded
+evidence workflow:
 
-- retrieval happens before the answering model can respond;
-- searches and evidence-sufficiency assessments are captured in the run trace;
-- the application permits at most three searches, including refinements;
-- every citation must resolve to evidence retrieved during the current run;
-- insufficient evidence is a structured result, not an invitation to guess.
+- **Search before answering:** at most three searches, with searches and
+  evidence-sufficiency assessments recorded in the run trace.
+- **Validate citations:** each citation must resolve to evidence retrieved
+  during the current question's run.
+- **Make uncertainty visible:** insufficient evidence is an explicit outcome.
 
-These controls do not make hallucinations impossible or prove that every
-cited interpretation is correct. They make retrieval, grounding, citation, and
-answer failures distinguishable and testable. When the evidence retrieved from
-the indexed history is insufficient, the system says so instead of inventing a
-rationale.
-
-A general coding agent with repository access can investigate history on
-demand and may be simpler for a one-off question or a small repository.
-RepoRationale does not claim that indexed retrieval always performs better. Its
-value is a reusable, bounded, citation-validated workflow whose behaviour and
-failures can be inspected and evaluated.
+These controls make failures inspectable; they do not guarantee that a cited
+claim is correct. A general coding agent may be simpler for a one-off question.
+RepoRationale's focus is a reusable workflow with measured behaviour.
 
 ## How it works
 
@@ -73,35 +68,33 @@ abstention, rebuild confirmation, and alternative failure states.
 
 ## Measured, not just demonstrated
 
-The evaluation used [`google/gson`](https://github.com/google/gson), Google's
-mature Java JSON library, selected for its large, long-lived, and varied
-repository history. A frozen configuration was run once against six answerable
-questions and two unsupported-premise controls, with no retries. Separate
-controlled experiments measured indexing and snapshot reuse.
+The held-out evaluation used [`google/gson`](https://github.com/google/gson),
+Google's Java JSON library: six answerable questions and two unsupported-premise
+controls, run once with a frozen configuration and no retries.
+
+**Evaluated version:** these results predate the release's exact-question-first
+search rule. A later diagnostic recovered a missed source and motivated that
+correction; it did not replace the held-out results.
 
 | Measure | Recorded result |
 | --- | ---: |
-| Direct vector retrieval found expected evidence in the top five results | **6/6 answerable questions** |
+| Expected evidence in the top five results | **Vector: 6/6; BM25 baseline: 4/6** |
 | Correct `answered` / `insufficient_evidence` outcome | **8/8** |
-| Malformed or unauthorized citations | **0** |
-| Adequate claim support / citation completeness | **8/8 / 8/8** |
 | Answers citing a predeclared expected source | **5/6** |
+| Malformed or unauthorized citations | **0** |
 | Mean end-to-end answer latency | **15.14 s** |
-| Estimated Anthropic cost for all eight answers | **$0.522605** |
-| Cold index build for 13,898 sources and 17,484 chunks | **404.35 s** |
-| Reopen completed index | **2.97 s, no document re-embedding** |
 
-One answer was grounded but incomplete relative to the preferred evidence,
-which is why expected-source coverage was 5/6 rather than 6/6. A bounded
-post-run diagnostic isolated its first-query problem and led to the
-exact-question-first workflow used by the release; the published held-out score
-was not replaced or retried. The evaluation also records failed development
-runs, cases where the lexical baseline won, and the limitations of the small
-held-out set. No head-to-head comparison was run against a general coding agent
-with access to the same history.
+Manual review found adequate claim support and citation completeness across
+the eight cases, but one answer missed part of the preferred rationale. Total
+estimated Anthropic cost for the eight answers was **$0.52**.
 
-The complete staged method and results are in the
-[evaluation](docs/evaluation.md).
+**Separate indexing measurements:** a later cold build of 13,898 sources and
+17,484 chunks took **6.74 minutes**; reopening took **2.97 seconds** without
+document re-embedding.
+
+The sample is small, and no head-to-head comparison with a general coding agent
+was performed. The [evaluation](docs/evaluation.md) records the methodology,
+failed runs, cases where BM25 won, and controlled performance experiments.
 
 ## Quick start
 
@@ -150,20 +143,13 @@ uv run pytest
 ## Architecture and engineering quality
 
 RepoRationale is a Python modular monolith with separate interface,
-application-workflow, domain, and provider-adapter boundaries. Its retrieval
-and bounded agent orchestration are project-owned rather than hidden behind a
-large orchestration framework.
+application-workflow, domain, and provider-adapter boundaries. A small
+project-owned loop controls retrieval, refinements, and citation validation.
 
-| Role | First-release implementation |
-| --- | --- |
-| Runtime | [Python](https://www.python.org/) 3.13 modular monolith |
-| User interface | [Streamlit](https://docs.streamlit.io/) |
-| Repository source | [GitHub REST API](https://docs.github.com/en/rest) |
-| Embeddings | [Voyage 4](https://docs.voyageai.com/docs/embeddings) |
-| Vector retrieval | [Chroma](https://docs.trychroma.com/), persisted locally |
-| Answering model | [Anthropic Claude](https://platform.claude.com/docs/en/models/overview), using `claude-opus-5` |
-| Offline baseline | [BM25](https://en.wikipedia.org/wiki/Okapi_BM25), evaluation-only |
-| Tooling | [uv](https://docs.astral.sh/uv/), [pytest](https://docs.pytest.org/), [Ruff](https://docs.astral.sh/ruff/), and [mypy](https://mypy-lang.org/) |
+- **Application:** [Python](https://www.python.org/) 3.13 and [Streamlit](https://docs.streamlit.io/).
+- **Ingestion and retrieval:** [GitHub REST API](https://docs.github.com/en/rest), [Voyage 4](https://docs.voyageai.com/docs/embeddings), and locally persisted [Chroma](https://docs.trychroma.com/); [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) is an evaluation-only baseline.
+- **Answering:** [Anthropic Claude](https://platform.claude.com/docs/en/models/overview), using `claude-opus-5`.
+- **Quality:** [uv](https://docs.astral.sh/uv/), [pytest](https://docs.pytest.org/), [Ruff](https://docs.astral.sh/ruff/), and [mypy](https://mypy-lang.org/).
 
 The release passes 741 automated tests, Ruff linting and formatting, strict
 mypy checks across 89 source files, and the same quality gates in
